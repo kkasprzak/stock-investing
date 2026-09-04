@@ -1,0 +1,8 @@
+{
+  "name": "trading-plan",
+  "description": "The analysis layer of a trading plan: delayed D1/W1/MN candles and Wilder ATR from a shared ISIN-backed symbol map, a strict-contract technical read of one instrument, and a neutral company-fact fetcher (events, fundamentals, news). Each skill works on one instrument in isolation and returns facts, not recommendations.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Karol Kasprzak"
+  }
+}
