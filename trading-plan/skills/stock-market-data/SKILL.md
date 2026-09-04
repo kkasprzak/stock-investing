@@ -14,11 +14,11 @@ output contract, not the provider.
 ## Run
 
 ```
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/stock-market-data/scripts/quotes.py PKN.PL ALE.PL PKO.PL ETFBM40TR.PL  # broker tickers, daily
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/stock-market-data/scripts/quotes.py PKN.PL --interval w                # weekly (W1); m = monthly
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/stock-market-data/scripts/quotes.py PKN.PL --bars 10                   # more history per symbol
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/stock-market-data/scripts/quotes.py PKN.PL --cache                     # reuse today's closed candles (skip the fetch)
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/stock-market-data/scripts/quotes.py PKN.PL --atr                       # + Wilder ATR(14) on that interval (--atr 20 to override)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL ALE.PL PKO.PL ETFBM40TR.PL   # broker tickers, daily
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --interval w                 # weekly (W1); m = monthly
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --bars 10                    # more history per symbol
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --cache                      # reuse today's closed candles (skip the fetch)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --atr                        # + Wilder ATR(14) on that interval (--atr 20 to override)
 ```
 
 Input is **broker tickers** (`.PL` / `.DE` / `.US`) — the same symbols the state files use — or an
