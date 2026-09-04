@@ -90,6 +90,28 @@ class TestResolve(unittest.TestCase):
         self.assertEqual(quotes.resolve("V80A.DE", self.idx), ("V80A.DE", "symbols.json"))
 
 
+class TestBrokerSymbol(unittest.TestCase):
+    """The execution-venue ticker a caller needs to name a state-file row. Never guessed."""
+
+    def setUp(self):
+        self.idx = quotes.load_index()
+
+    def test_by_isin(self):                 # sourcing keys by ISIN, writes the broker ticker
+        self.assertEqual(quotes.broker_symbol("PLPKN0000018", self.idx), "PKN.PL")
+
+    def test_by_broker_ticker(self):        # already a broker ticker -> itself
+        self.assertEqual(quotes.broker_symbol("PKN.PL", self.idx), "PKN.PL")
+
+    def test_rename_guard(self):            # broker keeps the old root; Yahoo moved off it
+        self.assertEqual(quotes.broker_symbol("PLCCC0000016", self.idx), "CCC.PL")
+
+    def test_unlisted_is_none(self):        # mapped instrument the broker does not offer
+        self.assertIsNone(quotes.broker_symbol("PLROBYG00321", self.idx))
+
+    def test_unmapped_is_none(self):        # never inferred from the GPW root
+        self.assertIsNone(quotes.broker_symbol("ZZZ.PL", self.idx))
+
+
 class TestRangeFor(unittest.TestCase):
     """#1 — fetch a Yahoo range wide enough to yield the requested bar count (from a daily series).
     Pins the intent behind the daily-history fix: small callers stay cheap; triage gets ~252 D1."""

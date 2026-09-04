@@ -81,6 +81,13 @@ def resolve(ticker, idx):
     return ticker, "suffix_guess"                  # foreign (.DE/.US/...) already Yahoo-shaped
 
 
+def broker_symbol(ticker, idx):
+    """The execution-venue ticker for this instrument, or None when the map has none. Callers keyed
+    by ISIN (index-membership sourcing) need it to name a state-file row. Never guessed: an
+    instrument the broker does not list must be confirmed there, not inferred from the GPW root."""
+    return (idx.get(ticker) or {}).get("symbols", {}).get("xtb")
+
+
 def fetch_chart(yahoo, rng, tries=4):
     """Return (result, None) or (None, reason). Mirrors screen.py fetch idiom + 429 linear backoff."""
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo}?range={rng}&interval=1d"
@@ -343,14 +350,15 @@ def main():
     quotes = {}
     for tk in args.tickers:
         yahoo, how = resolve(tk, idx)
+        xtb = broker_symbol(tk, idx)
         daily, src = get_daily(yahoo, rng, today, use_cache=args.cache)
         if daily is None:
-            quotes[tk] = {"yahoo_symbol": yahoo, "resolved_by": how, "ok": False,
+            quotes[tk] = {"yahoo_symbol": yahoo, "xtb": xtb, "resolved_by": how, "ok": False,
                           "reason": src, "value": "[NO DATA]"}
             continue
         if src == "live":
             time.sleep(THROTTLE)                        # throttle real fetches only
-        quotes[tk] = {"yahoo_symbol": yahoo, "resolved_by": how, "ok": True,
+        quotes[tk] = {"yahoo_symbol": yahoo, "xtb": xtb, "resolved_by": how, "ok": True,
                       **quote_record(daily, args.interval, args.bars, today, args.atr)}
 
     result = {

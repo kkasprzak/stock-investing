@@ -36,9 +36,13 @@ still be stale by construction — that bar is `complete:false`, so never decide
 
 ## Output contract
 
-Self-describing JSON to stdout: `quotes[<broker ticker>]` with `yahoo_symbol`, `resolved_by`, and
-either `ok:true` + `last_closed {date,c}` + `bars[]`, or `ok:false` + `reason` + `value:"[NO DATA]"`.
+Self-describing JSON to stdout: `quotes[<key you passed>]` with `yahoo_symbol`, `xtb`,
+`resolved_by`, and either `ok:true` + `last_closed {date,c}` + `bars[]`, or `ok:false` + `reason` +
+`value:"[NO DATA]"`.
 
+- `xtb` = the **execution-venue ticker** for this instrument, or `null` when the map has none.
+  Reach for it when you keyed by ISIN and need the symbol a state file names. Never guessed: `null`
+  means the broker does not list it, so confirm there rather than inferring from the GPW root.
 - `last_closed` = the most recent **completed** D1 candle — the number to reason on.
 - `atr` (only with `--atr`) = `{n, method, interval, value, bars_used, as_of, short_history}` — Wilder's
   ATR on the requested interval, the single definition every caller shares. Computed from **complete**
