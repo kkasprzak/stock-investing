@@ -1,6 +1,6 @@
 ---
 name: stock-market-data
-description: Fetch fresh delayed daily / weekly / monthly (D1 / W1 / MN) OHLC candles, last closing prices, and Wilder ATR (average true range) for named stock-market instruments (GPW / XETRA / US), keyed by broker ticker via a shared ISIN-backed symbol map. Use whenever a task needs current or recent market prices, closes, or candles for specific tickers — a morning runaway check, a daily-close D1 evaluation, a weekly D1/W1/MN portfolio or watchlist review, or any ad-hoc "what did X close at" lookup. Also the one place ATR is computed: reach for it for an instrument's ATR, its normal daily range, how volatile it is, or a stop distance expressed in ATR multiples — never derive ATR from candles yourself, or two callers will disagree on the same number. The market-data-acquisition layer; returns facts, not decisions.
+description: Fetch fresh delayed daily / weekly / monthly (D1 / W1 / MN) OHLC candles, last closing prices, and Wilder ATR (average true range) for named stock-market instruments (GPW / XETRA / US), keyed by broker ticker via a shared ISIN-backed symbol map. Use whenever a task needs current or recent market prices, closes, or candles for specific tickers — a morning runaway check, a daily-close D1 evaluation, a weekly D1/W1/MN portfolio or watchlist review, or any ad-hoc "what did X close at" lookup. Also the one place ATR and confirmed swing lows are computed: reach for it for an instrument's ATR, its normal daily range, how volatile it is, a stop distance expressed in ATR multiples, or the swing lows a trailing stop is anchored to — never derive either from candles yourself, or two callers will disagree on the same number. The market-data-acquisition layer; returns facts, not decisions.
 user-invocable: false
 ---
 
@@ -19,6 +19,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --interval w               
 python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --bars 10                    # more history per symbol
 python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --cache                      # reuse today's closed candles (skip the fetch)
 python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --atr                        # + Wilder ATR(14) on that interval (--atr 20 to override)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --swings                     # + confirmed swing lows (2 sessions each side; --swings 3 to override)
 ```
 
 Input is **broker tickers** (`.PL` / `.DE` / `.US`) — the same symbols the state files use — or an
@@ -49,6 +50,18 @@ Self-describing JSON to stdout: `quotes[<key you passed>]` with `yahoo_symbol`, 
   candles over a fixed window (`5 x n + 1`), so the same instrument reads the same ATR for a 6-bar
   morning check and a 200-bar sizing run. `short_history:true` = fewer candles than that window: the
   value is still reported, but the recursion has not settled. Too few for `n+1` TRs → `atr: null`.
+- `swing_lows` (only with `--swings`) = `{candle_interval, sessions_each_side_with_higher_lows,
+  window_first_session, window_last_session, window_sessions, detectable_through, detected[]}` — the
+  confirmed swing lows of that window, the single definition every caller shares. A low counts when
+  the N sessions before **and** after it all traded higher, so it cannot be read until N sessions
+  have closed after it: `detectable_through` is that edge, N sessions behind `window_last_session`.
+  Same window as ATR (`5 x n + 1`), so a stop distance in ATR multiples and the structure it is
+  measured against describe one stretch of history. Each row of `detected` (oldest first) carries
+  `{date, low_price, higher_than_previous_row_low, sessions_after_in_window,
+  lowest_low_in_those_sessions, undercut_by_later_session}`; `undercut` is a strict `<`, so an exact
+  retest is not one, and `higher_than_previous_row_low` is `null` on the first row (no predecessor),
+  never `false`. **Every** confirmed low is reported, lower ones included — which one a stop may
+  anchor to is the caller's rule, not this layer's. No pivot in the window → `detected: []`.
 - Data is **delayed (~15 min)** — recent, not real-time.
 - A price it can't read is `[NO DATA]`, never inferred. One bad ticker never fails the others.
 
@@ -63,6 +76,10 @@ Self-describing JSON to stdout: `quotes[<key you passed>]` with `yahoo_symbol`, 
 - **An ex-date inside the ATR window inflates ATR.** Candles are unadjusted, so a dividend gap enters
   True Range as volatility that never happened. This layer has no event calendar — the caller holding
   ex-dates checks whether one falls in the last `5 x n + 1` sessions.
+- **An ex-date can also mint a swing low.** The same unadjusted gap drops the low of the ex-day and
+  the sessions around it, so `swing_lows` can report structure that is a dividend, not a defended
+  level — and it looks identical to a real one. Same division of labour as ATR: this layer has no
+  event calendar, so the caller holding ex-dates decides whether a low near one still counts.
 - **`resolved_by:"suffix_guess"` is unverified.** The ticker wasn't in the map and was resolved by a
   blind `.PL→.WA` swap. After a rename this can point at the wrong or a non-existent symbol (the
   provider ticker can move off the broker root) → wrong data or `[NO DATA]`. Add it to the map.

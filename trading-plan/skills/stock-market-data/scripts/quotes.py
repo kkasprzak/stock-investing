@@ -6,6 +6,7 @@ Agent-first tool. Output is self-describing JSON (default) — read the keys, no
   python3 quotes.py PKN.PL --interval w           # weekly (W1); m = monthly (MN)
   python3 quotes.py PKN.PL --bars 10              # more history per symbol
   python3 quotes.py PKN.PL --atr                 # + Wilder ATR(14) on that interval (--atr 20 to override)
+  python3 quotes.py PKN.PL --swings              # + confirmed swing lows (2 sessions each side; --swings 3 to override)
 Fetches recent completed candles from Yahoo (~15 min delayed) for the given instruments, resolved via
 the shared symbols.json map (broker -> vendor symbol). W1/MN are aggregated from the daily series
 (Yahoo's native weekly/monthly bars split the current period unreliably). Evaluation/monitoring only —
@@ -25,9 +26,10 @@ CACHE_DIR = (os.environ.get("STOCK_MARKET_DATA_CACHE")
                  else os.path.join(tempfile.gettempdir(), "stock-market-data")))
 THROTTLE = 1.5                                  # pause between Yahoo requests (s)
 DEFAULT_BARS = 6                                # bars returned per symbol
-INTERVAL_LABEL = {"d": "1d", "w": "1wk", "m": "1mo"}
+INTERVAL_LABEL = {"d": "daily", "w": "weekly", "m": "monthly"}
 ATR_DEFAULT_N = 14                              # Wilder's default lookback
 ATR_WARMUP = 5                                  # x n candles of run-up before ATR is settled
+SWING_SESSIONS_DEFAULT = 2                      # sessions each side that must have a higher low
 
 # Yahoo fetch-range buckets (label, calendar-day span) and per-interval calendar headroom per bar.
 # W1/MN are aggregated from the daily series, so every interval maps onto daily calendar days.
@@ -272,13 +274,21 @@ def aggregate(daily, interval, today):
     return out
 
 
-def bars_needed(bars, atr_n=None):
-    """Candles the fetch must cover: what the caller wants to see, or ATR's run-up if that is longer.
-    ATR is recursive, so its value depends on how much history it was fed — deriving it from the
-    returned slice would make the same instrument read differently for a 6-bar morning check and a
-    70-bar sizing run. The run-up is therefore fixed here, independent of `bars`; atr_wilder() then
-    trims to that same window from the other side, so a wider fetch cannot shift the value either."""
-    return max(bars, atr_n * ATR_WARMUP + 1) if atr_n else bars
+def series_window(atr_n=None):
+    """The fixed lookback every derived block reads, in candles. One definition on purpose: ATR and
+    the swing lows must describe the same stretch of history, or a stop distance in ATR multiples
+    would be measured against structure the ATR never saw."""
+    return (atr_n or ATR_DEFAULT_N) * ATR_WARMUP + 1
+
+
+def bars_needed(bars, atr_n=None, swings=None):
+    """Candles the fetch must cover: what the caller wants to see, or the derived blocks' window if
+    that is longer. ATR is recursive, so its value depends on how much history it was fed — deriving
+    it from the returned slice would make the same instrument read differently for a 6-bar morning
+    check and a 70-bar sizing run. The window is therefore fixed here, independent of `bars`;
+    atr_wilder() and swing_lows() then trim to that same window from the other side, so a wider fetch
+    cannot shift either result."""
+    return max(bars, series_window(atr_n)) if (atr_n or swings) else bars
 
 
 def atr_wilder(bars, n=ATR_DEFAULT_N, interval=None):
@@ -292,7 +302,7 @@ def atr_wilder(bars, n=ATR_DEFAULT_N, interval=None):
     run-up — still reported (never a silent [NO DATA]), but flagged as not yet settled."""
     usable = [b for b in bars if b.get("complete") and b.get("h") is not None
               and b.get("l") is not None and b.get("c") is not None]
-    usable = usable[-(ATR_WARMUP * n + 1):]     # fixed window: a longer fetch must not shift the value
+    usable = usable[-series_window(n):]          # fixed window: a longer fetch must not shift the value
     if len(usable) < n + 1:
         return None
     trs = [max(usable[i]["h"] - usable[i]["l"],
@@ -308,15 +318,59 @@ def atr_wilder(bars, n=ATR_DEFAULT_N, interval=None):
     return rec
 
 
-def quote_record(daily, interval, bars, today, atr_n=None):
+def swing_lows(bars, each_side=SWING_SESSIONS_DEFAULT, interval=None, atr_n=None):
+    """Confirmed swing lows over a series (newest last), as a self-describing record — or None when
+    the series carries no usable candle. A swing low is a session whose low the `each_side` sessions
+    before **and** after it did not reach, so it cannot be read until that many sessions have closed
+    after it (`detectable_through` marks that edge).
+
+    Every confirmed low is reported, including ones lower than the previous — this layer describes the
+    series, it does not pick the one a trailing stop may use. The two derived fields carry what that
+    choice needs: `higher_than_previous_row_low` compares with the preceding row, and
+    `undercut_by_later_session` says whether price has since traded below the low (strict `<`, so an
+    exact retest is not an undercut). Only **complete** candles count: a forming bar's low keeps
+    moving, so it can neither be a swing low nor undercut one."""
+    usable = [b for b in bars if b.get("complete") and b.get("l") is not None]
+    usable = usable[-series_window(atr_n):]      # the same window ATR reads — see series_window()
+    if not usable:
+        return None
+    lows = [b["l"] for b in usable]
+    detected = []
+    for i in range(each_side, len(usable) - each_side):
+        low = lows[i]
+        if not all(lows[j] > low for j in range(i - each_side, i + each_side + 1) if j != i):
+            continue
+        after = lows[i + 1:]
+        lowest_after = min(after)
+        detected.append({
+            "date": usable[i]["date"],
+            "low_price": low,
+            "higher_than_previous_row_low": None if not detected else low > detected[-1]["low_price"],
+            "sessions_after_in_window": len(after),
+            "lowest_low_in_those_sessions": lowest_after,
+            "undercut_by_later_session": lowest_after < low,
+        })
+    rec = {"sessions_each_side_with_higher_lows": each_side,
+           "window_first_session": usable[0]["date"], "window_last_session": usable[-1]["date"],
+           "window_sessions": len(usable),
+           "detectable_through": usable[-(each_side + 1)]["date"] if len(usable) > each_side else None,
+           "detected": detected}
+    if interval:
+        rec = {"candle_interval": interval, **rec}
+    return rec
+
+
+def quote_record(daily, interval, bars, today, atr_n=None, swings=None):
     """The per-symbol payload: the last `bars` candles of `interval`, their last closed one, and
-    optionally ATR. ATR is computed over the **whole** fetched series, not the returned slice — see
-    bars_needed()."""
+    optionally ATR and the swing lows. Both derived blocks are computed over the **whole** fetched
+    series, not the returned slice — see bars_needed()."""
     series = daily if interval == "d" else aggregate(daily, interval, today)
     shown = series[-bars:]
     rec = {"last_closed": last_closed(shown), "bars": shown}
     if atr_n:
         rec["atr"] = atr_wilder(series, atr_n, INTERVAL_LABEL[interval])
+    if swings:
+        rec["swing_lows"] = swing_lows(series, swings, INTERVAL_LABEL[interval], atr_n)
     return rec
 
 
@@ -339,6 +393,11 @@ def main():
                     help=f"also report Wilder ATR(N) on the chosen interval (bare --atr = "
                          f"{ATR_DEFAULT_N}); widens the fetch to cover ATR's run-up, so the value "
                          f"never depends on --bars")
+    ap.add_argument("--swings", type=int, nargs="?", const=SWING_SESSIONS_DEFAULT, default=None,
+                    metavar="N",
+                    help=f"also report confirmed swing lows on the chosen interval, N sessions each "
+                         f"side (bare --swings = {SWING_SESSIONS_DEFAULT}); reads the same window as "
+                         f"ATR, so both describe one stretch of history")
     ap.add_argument("--cache", action="store_true",
                     help="reuse the same market day's closed candles from an on-disk cache; omit when "
                          "the moment needs live data")
@@ -346,7 +405,7 @@ def main():
 
     idx = load_index()
     today = date.today().isoformat()
-    rng = range_for(args.interval, bars_needed(args.bars, args.atr))
+    rng = range_for(args.interval, bars_needed(args.bars, args.atr, args.swings))
     quotes = {}
     for tk in args.tickers:
         yahoo, how = resolve(tk, idx)
@@ -359,7 +418,7 @@ def main():
         if src == "live":
             time.sleep(THROTTLE)                        # throttle real fetches only
         quotes[tk] = {"yahoo_symbol": yahoo, "xtb": xtb, "resolved_by": how, "ok": True,
-                      **quote_record(daily, args.interval, args.bars, today, args.atr)}
+                      **quote_record(daily, args.interval, args.bars, today, args.atr, args.swings)}
 
     result = {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

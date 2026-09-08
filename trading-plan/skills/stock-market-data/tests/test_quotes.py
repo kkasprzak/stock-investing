@@ -453,7 +453,7 @@ class TestATR(unittest.TestCase):
     def test_golden_pkn_daily_n14(self):
         a = quotes.quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_TODAY, 14)["atr"]
         self.assertAlmostEqual(a["value"], 3.5264, places=4)
-        self.assertEqual((a["as_of"], a["bars_used"], a["interval"]), ("2026-07-24", 71, "1d"))
+        self.assertEqual((a["as_of"], a["bars_used"], a["interval"]), ("2026-07-24", 71, "daily"))
         self.assertFalse(a["short_history"])
 
     def test_window_capped_so_a_wider_fetch_cannot_shift_it(self):
@@ -464,7 +464,7 @@ class TestATR(unittest.TestCase):
 
     def test_weekly_runs_on_aggregated_candles(self):
         a = quotes.quote_record(pipeline("PKN", "d"), "w", 6, FROZEN_TODAY, 14)["atr"]
-        self.assertEqual((a["interval"], a["as_of"], a["bars_used"]), ("1wk", "2026-07-20", 32))
+        self.assertEqual((a["interval"], a["as_of"], a["bars_used"]), ("weekly", "2026-07-20", 32))
         self.assertAlmostEqual(a["value"], 8.8829, places=4)
         self.assertTrue(a["short_history"])         # 31 weekly TRs < 5 x 14 -> flagged, not hidden
 
@@ -473,6 +473,113 @@ class TestATR(unittest.TestCase):
 
     def test_monthly_fixture_is_too_short_to_report(self):
         self.assertIsNone(quotes.quote_record(pipeline("PKN", "d"), "m", 6, FROZEN_TODAY, 14)["atr"])
+
+
+class TestSwingLows(unittest.TestCase):
+    """Which low a trailing stop may anchor to is a rule; whether a session *is* a swing low is
+    arithmetic, and two readers of the same chart disagreed on it by two grosz. So it is pinned the
+    way ATR is: hand-computable detection, the derived flags, and the window invariant.
+
+    Every confirmed low is reported, lower ones included — the caller applies the rule."""
+
+    # Lows: 10, 9, 8, 9, 10, 9.5, 7, 8, 9. At 2 sessions each side only two qualify:
+    # index 2 (8, undercut later by 7) and index 6 (7, never undercut).
+    HAND = [{"date": f"2026-01-{i + 1:02d}", "o": lo, "h": lo + 1, "l": lo, "c": lo,
+             "complete": True}
+            for i, lo in enumerate([10, 9, 8, 9, 10, 9.5, 7, 8, 9])]
+
+    def test_hand_computed_detection(self):
+        s = quotes.swing_lows(self.HAND, 2)
+        self.assertEqual([(r["date"], r["low_price"]) for r in s["detected"]],
+                         [("2026-01-03", 8), ("2026-01-07", 7)])
+
+    def test_a_lower_neighbour_on_either_side_disqualifies(self):
+        """The rule that keeps a stop off structure price walked through: 9 at index 3 has an 8 on
+        its left, 9.5 at index 5 has a 9 on its left. Neither is a swing low, and no number of
+        sessions closing after them will change that."""
+        dates = [r["date"] for r in quotes.swing_lows(self.HAND, 2)["detected"]]
+        self.assertNotIn("2026-01-04", dates)
+        self.assertNotIn("2026-01-06", dates)
+
+    def test_derived_fields_carry_what_the_rule_needs(self):
+        first, second = quotes.swing_lows(self.HAND, 2)["detected"]
+        # Arrange / Act / Assert — the first row has no predecessor to compare with
+        self.assertIsNone(first["higher_than_previous_row_low"])
+        self.assertEqual((first["sessions_after_in_window"],
+                          first["lowest_low_in_those_sessions"],
+                          first["undercut_by_later_session"]), (6, 7, True))
+        self.assertEqual((second["higher_than_previous_row_low"],
+                          second["sessions_after_in_window"],
+                          second["lowest_low_in_those_sessions"],
+                          second["undercut_by_later_session"]), (False, 2, 8, False))
+
+    def test_an_exact_retest_is_not_an_undercut(self):
+        """`undercut` is a strict `<`: price reaching the low again has not traded through it."""
+        # Lows 10, 9, 8, 9, 10, 8, 11 — one swing low at index 2, retested to the grosz at index 5.
+        bars = [{"date": f"2026-02-{i + 1:02d}", "o": lo, "h": lo + 1, "l": lo, "c": lo,
+                 "complete": True} for i, lo in enumerate([10, 9, 8, 9, 10, 8, 11])]
+        row, = quotes.swing_lows(bars, 2)["detected"]
+        self.assertEqual((row["low_price"], row["lowest_low_in_those_sessions"]), (8, 8))
+        self.assertFalse(row["undercut_by_later_session"])
+
+    def test_detectable_through_lags_the_window_by_the_confirmation(self):
+        s = quotes.swing_lows(self.HAND, 2)
+        self.assertEqual((s["window_last_session"], s["detectable_through"]),
+                         ("2026-01-09", "2026-01-07"))
+        self.assertEqual(quotes.swing_lows(self.HAND, 3)["detectable_through"], "2026-01-06")
+
+    def test_forming_bar_excluded(self):
+        bars = [dict(b) for b in self.HAND]
+        bars[-1]["complete"] = False
+        s = quotes.swing_lows(bars, 2)
+        self.assertEqual(s["window_last_session"], "2026-01-08")
+        self.assertEqual(s["detectable_through"], "2026-01-06")
+        self.assertEqual([r["date"] for r in s["detected"]], ["2026-01-03"])   # 7 loses its right side
+
+    def test_no_pivot_is_an_empty_list_not_a_missing_key(self):
+        rising = [dict(b, l=10 + i, date=f"2026-03-{i + 1:02d}") for i, b in enumerate(self.HAND)]
+        self.assertEqual(quotes.swing_lows(rising, 2)["detected"], [])
+
+    def test_window_matches_atr_so_both_describe_one_stretch(self):
+        """A stop distance in ATR multiples is measured against these lows; if the two blocks read
+        different history, the multiple describes structure the ATR never saw."""
+        daily = pipeline("PKN", "d")                     # 150 complete bars
+        rec = quotes.quote_record(daily, "d", 6, FROZEN_TODAY, 14, 2)
+        self.assertEqual(rec["swing_lows"]["window_sessions"], rec["atr"]["bars_used"])
+        self.assertEqual(quotes.swing_lows(daily, 2), quotes.swing_lows(daily[-71:], 2))
+
+    def test_result_independent_of_returned_slice(self):
+        recs = {b: quotes.quote_record(pipeline("PKN", "d"), "d", b, FROZEN_TODAY, 14, 2)["swing_lows"]
+                for b in (6, 20, 70, 150)}
+        self.assertEqual(len({json.dumps(r, sort_keys=True) for r in recs.values()}), 1)
+
+    def test_golden_pkn_daily(self):
+        """Regression pin, not an independently verified one — the arithmetic rides on the hand
+        tests above. Spot-checkable in the fixture: 144.20 on 2026-07-17 sits under 144.66 / 144.84
+        on its left and 144.88 / 146.28 on its right, with five sessions left in the window."""
+        s = quotes.quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_TODAY, 14, 2)["swing_lows"]
+        self.assertEqual((s["candle_interval"], s["window_first_session"],
+                          s["window_last_session"], s["window_sessions"], s["detectable_through"]),
+                         ("daily", "2026-04-15", "2026-07-24", 71, "2026-07-22"))
+        self.assertEqual(len(s["detected"]), 10)
+        self.assertEqual(s["detected"][-1], {
+            "date": "2026-07-17", "low_price": 144.2, "higher_than_previous_row_low": True,
+            "sessions_after_in_window": 5, "lowest_low_in_those_sessions": 144.88,
+            "undercut_by_later_session": False})
+
+    def test_weekly_runs_on_aggregated_candles(self):
+        s = quotes.quote_record(pipeline("PKN", "d"), "w", 6, FROZEN_TODAY, 14, 2)["swing_lows"]
+        self.assertEqual(s["candle_interval"], "weekly")
+        self.assertLess(s["window_sessions"], 71)        # 150 daily bars aggregate to fewer weeks
+
+    def test_absent_unless_asked(self):
+        self.assertNotIn("swing_lows",
+                         quotes.quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_TODAY, 14))
+
+    def test_bars_needed_covers_the_window_without_atr(self):
+        self.assertEqual(quotes.bars_needed(6, None, None), 6)
+        self.assertEqual(quotes.bars_needed(6, None, 2), 71)     # swings alone still widen the fetch
+        self.assertEqual(quotes.bars_needed(6, 14, 2), 71)
 
 
 class TestStooqOracle(unittest.TestCase):
