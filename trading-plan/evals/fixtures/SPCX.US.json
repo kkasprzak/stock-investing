@@ -1,0 +1,16 @@
+{
+ "symbol": "SPCX.US",
+ "delayed": "~15min provider data; candles unadjusted for dividends",
+ "D1": {
+  "status": "[NO DATA]",
+  "reason": "not_found"
+ },
+ "W1": {
+  "status": "[NO DATA]",
+  "reason": "not_found"
+ },
+ "MN": {
+  "status": "[NO DATA]",
+  "reason": "not_found"
+ }
+}
