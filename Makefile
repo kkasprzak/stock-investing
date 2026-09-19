@@ -15,7 +15,7 @@ EVALS       := trading-plan/evals
 OUT         := $(EVALS)/output
 RESULTS     := $(OUT)/results
 EXTRACT     := python3 $(EVALS)/scripts/extract_outputs.py
-TESTS       := trading-plan/skills/stock-market-data/tests
+SKILLS      := trading-plan/skills
 
 RUNS        ?= 5
 CASE        ?=
@@ -46,7 +46,7 @@ help:
 	@echo "  make baseline            also run a no-plugin arm and report the score delta"
 	@echo "  make outputs             re-run the extractor over the last results, no model calls"
 	@echo "  make report              open the HTML report from the last run"
-	@echo "  make test                offline unit tests for stock-market-data"
+	@echo "  make test                offline unit tests for every skill"
 	@echo "  make clean               remove $(OUT) and any kept eval sandboxes"
 	@echo
 	@echo "  variables: RUNS=$(RUNS) ABLATION=$(ABLATION) MAX_COST=$(MAX_COST) CASE=$(CASE)"
@@ -81,8 +81,14 @@ report:
 	@test -f $(RESULTS)/report.html || { echo "no report — run \`make evals\` first"; exit 1; }
 	@open $(RESULTS)/report.html 2>/dev/null || echo "$(RESULTS)/report.html"
 
+# Discovered per skill: the tests/ dirs are not packages, so a single discover from
+# $(SKILLS) would not descend into them.
 test:
-	python3 -m unittest discover -s $(TESTS)
+	@for d in $(SKILLS)/*/tests; do \
+	  [ -d "$$d" ] || continue; \
+	  echo "==> $$d"; \
+	  python3 -m unittest discover -s "$$d" || exit 1; \
+	done
 
 clean: clean-temp
 	rm -rf $(OUT)
