@@ -17,17 +17,23 @@ that runs in a retirement account, a taxable brokerage account, or a spreadsheet
 
 ### `trading-plan`
 
-The analysis layer of a trading plan. Three skills, each working on **one instrument in isolation**:
+The analysis layer of a trading plan. Four skills — three read **one instrument in isolation**, the
+fourth remembers what you held:
 
 | skill | what it does |
 |---|---|
 | `stock-market-data` | Fetches delayed daily / weekly / monthly OHLC candles and Wilder ATR for named tickers (GPW / XETRA / US), resolved through a shared ISIN-keyed symbol map. The single place ATR is computed, so two callers never disagree on the same number. |
 | `instrument-analysis` | A purely technical read of one instrument from a candle snapshot: trend, momentum, key levels, condition, invalidation, an implied stop, and a 0-10 setup score. Emits a strict ten-line contract with closed vocabularies, so an orchestrator can parse it. |
 | `instrument-research` | Web-sourced company facts, one facet at a time: `events` (earnings, ex-dividend, buybacks, overhang, contested control), `fundamentals`, or `news`. Every date and number carries its source, or is marked `[UNVERIFIED]` — never inferred. |
+| `position-journal` | An append-only log of positions opened and closed, and three folds over it: what you hold, every episode of one name, and how many shares you held on a given date. A state file forgets a position the moment you delete its row — this is what answers *have we owned this before, and when did we leave it*. |
 
-**What they deliberately do not do:** place orders, connect to a broker, read your account, size a
-position, or tell you to buy or sell anything. They take data in and return findings. Every
-portfolio decision belongs to you or to whatever calls them.
+**What they deliberately do not do:** place orders, connect to a broker, size a position, or tell
+you to buy or sell anything. They take data in and return findings. Every portfolio decision
+belongs to you or to whatever calls them.
+
+`position-journal` is the one skill that holds anything of yours, and it still reads nothing: you
+tell it a fill happened and it records that. The log is a plain JSONL file in your own working
+directory, and it never leaves it.
 
 ## Install
 
@@ -51,12 +57,13 @@ swap does not.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s trading-plan/skills/stock-market-data/tests
+make test                                      # every skill's offline suite
 RUN_LIVE_SMOKE=1 python3 -m unittest discover -s trading-plan/skills/stock-market-data/tests
 ```
 
-The offline suite runs against frozen fixtures in about a hundredth of a second. The live smoke
-test hits the data provider and is opt-in.
+The offline suites run in well under a second — `stock-market-data` against frozen fixtures,
+`position-journal` against none at all, since it has no network and no clock. The live smoke test
+hits the data provider and is opt-in.
 
 ## Disclaimer
 
