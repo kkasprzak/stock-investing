@@ -3,12 +3,12 @@
   "owner": {
     "name": "Karol Kasprzak"
   },
-  "description": "Skills for reading a stock before you buy it: fresh delayed candles with Wilder ATR, a strict-contract technical read of one instrument, and sourced company facts. Returns findings, never orders. Not investment advice.",
+  "description": "Skills for reading a stock before you buy it and remembering what you held: fresh delayed candles with Wilder ATR, a strict-contract technical read of one instrument, sourced company facts, and a journal of positions opened and closed. Returns findings, never orders. Not investment advice.",
   "plugins": [
     {
       "name": "trading-plan",
       "source": "./trading-plan",
-      "description": "Skills for reading a stock before you buy it: fresh delayed OHLC candles with Wilder ATR, an isolated per-instrument technical read, and web-sourced company facts. Returns findings, never orders."
+      "description": "Skills for reading a stock before you buy it and remembering what you held: fresh delayed OHLC candles with Wilder ATR, an isolated per-instrument technical read, web-sourced company facts, and an append-only position journal. Returns findings, never orders."
     }
   ]
 }

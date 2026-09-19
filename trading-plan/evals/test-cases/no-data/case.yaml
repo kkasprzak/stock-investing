@@ -1,0 +1,19 @@
+schema_version: "1.0"
+name: no-data
+runs: 5
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 6
+  allowed_tools: [Skill, Read]
+  prompt: |
+    Follow the trading-plan:instrument-analysis skill to produce a purely technical read of ONE instrument.
+
+    Symbol: SPCX.US
+    Role: stock observational
+
+    Candle snapshot: read ./SPCX.US.json. It holds this instrument's closed D1, W1 and MN candles and its last close. Read no other file — that file is your entire input.
+
+    Note: the monthly (MN) candle for the current month is still forming; treat it as in-progress. Provider data is delayed and candles are unadjusted for dividends.
+
+    Return the technical block the skill specifies — trend, momentum, key levels, condition, invalidation, implied technical stop, and the 0-10 setup score.
