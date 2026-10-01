@@ -2,7 +2,7 @@
 name: instrument-research
 description: Gather web-sourced company data for ONE instrument in isolation — one of three facets: `events` (next earnings + dividend ex-date + active buyback price cap + placement overhang + contested control), `fundamentals` (results/profitability, capital, valuation vs peers, dividend), or `news` (catalysts + analyst ratings). Use inside an isolated per-instrument subagent when a flow needs fresh company facts (the weekly review's event calendar; ad-hoc fundamental research). A neutral fact fetcher — not for portfolio decisions or recommendations; the caller owns those.
 user-invocable: false
-model: sonnet
+model: claude-sonnet-5-5
 effort: medium
 ---
 

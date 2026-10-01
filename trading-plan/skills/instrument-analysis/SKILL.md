@@ -2,7 +2,7 @@
 name: instrument-analysis
 description: Produce a purely technical read of ONE instrument from a candle snapshot — trend, momentum, key levels, condition, invalidation, an implied stop, and a 0-10 setup score. Use inside an isolated per-instrument review. Not for portfolio decisions or recommendations — the calling orchestrator owns those.
 user-invocable: false
-model: sonnet
+model: claude-sonnet-5-5
 effort: medium
 ---
 
