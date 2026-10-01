@@ -115,19 +115,16 @@ proof of anything.
 for both is admissible when the structure leaves no room between them and `note` says so. It
 will fail an output that is in fact compliant.
 
-`exactly-ten-contract-lines` counts occurrences rather than checking order and uniqueness, so a
-block with a key repeated and another missing still passes at ten.
-
 Two invariants are not covered at all, and cannot be with the graders available: that
 `technical_stop` sits on the correct side of the last close, and that `key_levels` fall within
 the snapshot's price range. Both are numeric comparisons, and a `regex` grader matches patterns
 rather than comparing values — expressing them needs a paid `llm` grader or a check outside the
 runner.
 
-The `no-data` case carries a single trivial grader on purpose: it exercises the harness end to
-end rather than the contract. Note also that its expected output is what the model emits when
-the fixture is missing entirely, so it passes whether or not the snapshot was staged — run
-without `--scaffold` and it goes green for the wrong reason.
+The `no-data` case checks the shape of the block — ten keys, in order, nothing around them — but
+not that the fixture was actually read. Its expected output is also what the model tends to emit
+when the fixture never reached the sandbox, so it can pass whether or not the snapshot was
+staged: run without `--scaffold` and it may go green for the wrong reason.
 
 ## Further reading
 
