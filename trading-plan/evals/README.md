@@ -15,6 +15,7 @@ make evals                  # the suite, 5 runs per case, then recover raw outpu
 make quick                  # one run per case — a smoke check
 make case CASE=no-data      # a single case
 make evals RUNS=10 MAX_COST=12
+make evals THRESHOLD=0.9    # let a weighted score below 1 still pass — see below
 ```
 
 `make` with no target lists them. What `make evals` actually runs:
@@ -32,7 +33,10 @@ gitignored. Drop the flag and they land in `evals/results/` instead — outside 
 they show up as untracked noise. It also flattens the layout: with the flag the runner writes
 `aggregate-result.json` and `report.html` straight into that directory, so **each run
 overwrites the previous one**; without it, every run gets its own `<timestamp>/` subdirectory.
-Keep the flag and keep the history in `runs/` instead, which is what the extractor is for.
+`runs/` follows suit: the extractor clears it before writing, so it always holds exactly one
+invocation. Before that, a one-run eval overwrote `run1` and left `run2…run5` from an earlier
+eval in place, and the directory read as one series when it was two. Nothing here keeps
+history — copy `output/` aside if you need a run to survive the next one.
 
 `--scaffold` is **required**. Without it the fixture never reaches the sandbox, the model emits
 a `[NO DATA]` block, and the `no-data` case passes for entirely the wrong reason.
@@ -40,6 +44,15 @@ a `[NO DATA]` block, and the `no-data` case passes for entirely the wrong reason
 `--keep-temp` is **required** if you want the raw outputs: the runner records score, cost and
 duration but not the response text, which lives only in `trace.jsonl` inside the scaffold
 directory that is deleted after each run. `extract_outputs.py` recovers it into `runs/`.
+The Makefile extracts even when the eval exits non-zero — a failing grader is exactly when the
+raw output is needed — and still returns the eval's exit status, so CI fails as it should.
+
+`--threshold` (`THRESHOLD=` in the Makefile) sets the score a case must reach; the default is 1.
+With the default every grader is a gate and weights only move the score. Below 1, weights decide
+which failures pass: at 0.9 a failed weight-1 grader leaves 0.93 and passes, a failed weight-2
+one leaves 0.875 and does not. The table's `PASS%` column is a separate, stricter measure — the
+share of runs in which *every* grader passed — and does not move with the threshold. CI gates on
+the score; watch `PASS%` so a tolerance does not hide a trend.
 
 ## Layout
 

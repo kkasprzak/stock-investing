@@ -21,10 +21,12 @@ RUNS        ?= 5
 CASE        ?=
 ABLATION    ?= none
 MAX_COST    ?= 5
+THRESHOLD   ?=
 
 -include evals.local.mk
 
 CASE_FLAG   := $(if $(CASE),--case $(CASE),)
+THRESH_FLAG := $(if $(THRESHOLD),--threshold $(THRESHOLD),)
 EVAL_CMD     = claude plugin eval $(PLUGIN) \
                  --runs $(RUNS) \
                  --ablation $(ABLATION) \
@@ -33,7 +35,8 @@ EVAL_CMD     = claude plugin eval $(PLUGIN) \
                  --keep-temp \
                  --no-publish \
                  --output-dir $(RESULTS) \
-                 $(CASE_FLAG)
+                 $(CASE_FLAG) \
+                 $(THRESH_FLAG)
 
 .PHONY: help evals quick case baseline outputs report test clean clean-temp check
 
@@ -49,7 +52,7 @@ help:
 	@echo "  make test                offline unit tests for every skill"
 	@echo "  make clean               remove $(OUT) and any kept eval sandboxes"
 	@echo
-	@echo "  variables: RUNS=$(RUNS) ABLATION=$(ABLATION) MAX_COST=$(MAX_COST) CASE=$(CASE)"
+	@echo "  variables: RUNS=$(RUNS) ABLATION=$(ABLATION) MAX_COST=$(MAX_COST) CASE=$(CASE) THRESHOLD=$(THRESHOLD)"
 	@echo "  example:   make evals RUNS=10 MAX_COST=12"
 
 # No pre-flight gate check: `--help` answers even when the command is gated off, and the
@@ -61,8 +64,10 @@ check:
 
 evals: check
 	@echo "==> $(RUNS) run(s) per case, ablation=$(ABLATION), ceiling \$$$(MAX_COST)"
-	$(EVAL_CMD)
-	@$(EXTRACT)
+	@echo "$(strip $(EVAL_CMD))"
+	@# Extract even when the eval exits non-zero: a failed grader is exactly when the raw output
+	@# is needed. The eval's exit status is kept and returned afterwards, so CI still fails.
+	@$(EVAL_CMD); status=$$?; $(EXTRACT); exit $$status
 
 quick:
 	@$(MAKE) --no-print-directory evals RUNS=1 MAX_COST=2

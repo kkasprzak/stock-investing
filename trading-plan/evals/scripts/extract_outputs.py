@@ -9,7 +9,7 @@ each run. So the eval must run with --keep-temp, and then this script.
         --output-dir trading-plan/evals/output/results
     python3 trading-plan/evals/scripts/extract_outputs.py
 
-Defaults to the newest run under evals/output/results/. Writes to evals/output/runs/:
+Defaults to the newest run under evals/output/results/. Replaces evals/output/runs/ with:
 
     <case>__run<N>.txt     the raw output, one file per run
     index.tsv              case, run, score, cost, duration, file
@@ -18,6 +18,7 @@ Standard library only, no dependencies.
 """
 import json
 import os
+import shutil
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -71,7 +72,12 @@ def main():
     with open(os.path.join(run_dir, "aggregate-result.json")) as f:
         agg = json.load(f)
 
-    os.makedirs(RUNS, exist_ok=True)
+    # runs/ must hold exactly one invocation. Left alone, a 1-run eval overwrites run1 and
+    # leaves run2..runN from an earlier eval in place, and the directory reads as one series
+    # when it is two. Cleared only after a result was found above, so a failed lookup
+    # never wipes the last good outputs.
+    shutil.rmtree(RUNS, ignore_errors=True)
+    os.makedirs(RUNS)
     rows = []
     for case in agg.get("cases", []):
         name = case["name"]
