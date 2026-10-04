@@ -165,6 +165,19 @@ not that the fixture was actually read. Its expected output is also what the mod
 when the fixture never reached the sandbox, so it can pass whether or not the snapshot was
 staged: run without `--scaffold` and it may go green for the wrong reason.
 
+## instrument-research: the buyback fix, before and after
+
+The commit that adds this section fixes the test set for the comparison: from here until the
+"after" line below, no case, fixture or reference changes — only the spec. A test changed after
+seeing its result proves nothing.
+
+**Before the fix** — 2026-10-04, at `4b831cb`, current spec, `claude-sonnet-5`, judge Sonnet 5.5,
+five runs each: `ale-0926-replay` 0/5 (0.40), every failure the 26 Sep error — a certain status
+resting on search summaries, the AGM authorisation read as the programme, Phase I's raised cap
+given as live; `ale-0829-recon` 0/5; controls `ale-0905-replay` 5/5, `ale-1003-replay` 5/5,
+`ale-0921-evening-recon` 4/5 (one run called a completed programme "active"); `events-shape` 0/5,
+by construction.
+
 ## Further reading
 
 `claude plugin eval` is in early access and has **no public documentation** — the plugins
