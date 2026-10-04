@@ -186,6 +186,42 @@ the model's — asked to explain itself, the judge opens with FAIL and then conc
 correct; the runner asks for one word, so the second thought is lost. The same reference grades
 both arms.
 
+**After the fix** — 2026-10-04, at `0eff4a4`, same tests, same model and judge, five runs each:
+
+| case | before | 1 prose rule | 2 rule in the field | 3 + later events | 4 structured | 5 + programme line |
+|---|---|---|---|---|---|---|
+| `ale-0926-replay` | 0/5 | 0/5 | 1/5 | 1/5 | 3/5, pilot 4/5 | **5/5**, pilot 5/5 |
+| `ale-0829-recon` | 0/5 | 3/5 | 5/5 | 5/5 | 5/5 | **5/5** |
+| `ale-0905-replay` | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
+| `ale-1003-replay` | 4/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
+| `ale-0921-evening-recon` | 4/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
+
+The fix took five versions of the spec. Only the first (`bb03ba9`) and the last (`0eff4a4`) were
+committed; the three between were measured on the working tree and are recorded only here, which
+is the reason to keep them in the table. The first
+three state a rule in prose: a search summary is not a source, then the same rule inside the
+`buyback` field, then a sentence saying a later event known only from a summary leaves the newest
+report out of date. The model read each one and reasoned around it. In `ale-0926-replay` it took a
+14 September transaction report as "the latest report" and wrote `running`, while a summary in the
+same inputs reported Phase II on 22 September.
+
+What worked was making the evidence part of the output. The field now opens with
+`latest_report_read` and `later_events_unread`, and the status follows from them. On the first
+structured version every run of 0926 gave `[UNVERIFIED]`. Of its failures, two filed the
+authorisation's PLN 1.6 bn as the programme's budget, which one more line on `programme` closed; the
+third was the judge's (below).
+A rule the model has to show its work for holds where a rule it only has to obey does not.
+
+`events-shape` is not in the table: it says nothing about the fix. Its regex allows one space after
+`buyback:`, the model aligns columns with several, and the case's instrument (V80A.DE, an ETF) has no
+buyback, so both specs answer `[N/A]`. It needs a new pattern for the structured field and an
+instrument with a real programme. Neither belongs in a comparison whose tests are frozen.
+
+The judge erred in both directions along the way. On the third version it passed an answer that gave
+the status as confirmed. On the fourth it failed an answer that, asked to reason item by item, it
+passed twice. Both are long answers near the line, and the runner takes one word per vote. A single
+run of five is a sample, not a verdict: read the answers behind a score before acting on it.
+
 ## Further reading
 
 `claude plugin eval` is in early access and has **no public documentation** — the plugins
