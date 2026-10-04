@@ -54,6 +54,31 @@ one leaves 0.875 and does not. The table's `PASS%` column is a separate, stricte
 share of runs in which *every* grader passed — and does not move with the threshold. CI gates on
 the score; watch `PASS%` so a tolerance does not hide a trend.
 
+## Which model runs what
+
+Two models are in play, and neither is the one a skill's frontmatter names.
+
+**The agent.** `model:` in a skill's `SKILL.md` does **not** reach an eval: every step of a run —
+the skill call, each read, the answer — goes to the agent's model, which is the runner's default
+unless the case sets `execution.model`. Read a trace's `model` fields before trusting any claim
+about it. Two earlier commits got this wrong: `d9719d6` put a behaviour change between two runs
+down to the `sonnet` alias moving, and `24675c5` said its trace confirmed the evals ran on the
+pinned Sonnet. Both runs were in fact executed by the default model; the change more likely came
+from that default moving (Opus 5 → 5.5) than from the alias. A case that must reproduce a specific
+run — every `instrument-research` replay — therefore pins `execution.model` to the model that run
+used.
+
+**The judge.** `type: llm` graders are decided by a separate model, three votes, majority wins.
+The runner's default judge is Haiku; the Makefile sets `JUDGE_MODEL=claude-sonnet-5-5` instead,
+because calibration showed Haiku cannot be trusted with a full answer. Fed one known-good
+`buyback:` field on its own, Haiku passed it six times out of six; fed the same field inside the
+whole seven-field answer it was taken from — about 5,000 characters, which is what a real run
+hands the judge — it failed it six times out of six. Sonnet 5.5 got every calibration text right,
+both directions, including a full known-bad answer: 36 of 36 votes, about a cent per verdict.
+
+The lesson generalises: calibrate a judge on what it will actually be shown. A calibration that
+hands it a trimmed excerpt is an easier test than the real one, and passes judges that will not.
+
 ## Layout
 
 ```
