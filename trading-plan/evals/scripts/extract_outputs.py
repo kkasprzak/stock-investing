@@ -10,6 +10,7 @@ each run. So the eval must run with --keep-temp, and then this script.
     python3 trading-plan/evals/scripts/extract_outputs.py
 
 Defaults to the newest run under evals/output/results/. Replaces evals/output/runs/ with:
+(both can be named instead: extract_outputs.py <results dir> <runs dir> — the live suite does)
 
     <case>__run<N>.txt     the raw output, one file per run
     index.tsv              case, run, score, cost, duration, file
@@ -68,7 +69,10 @@ def final_text(trace_path):
 
 
 def main():
+    global RUNS
     run_dir = sys.argv[1] if len(sys.argv) > 1 else latest_results_dir()
+    if len(sys.argv) > 2:
+        RUNS = sys.argv[2]
     with open(os.path.join(run_dir, "aggregate-result.json")) as f:
         agg = json.load(f)
 
