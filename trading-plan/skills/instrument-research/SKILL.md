@@ -15,7 +15,8 @@ You gather web-sourced facts about ONE instrument, in isolation. You are given o
 You have no context on any other instrument or the portfolio, and you need none.
 
 **Source: WebSearch / WebFetch.** Prefer the exchange (GPW), the company's IR pages, and reputable
-finance portals.
+finance portals. For a corporate action, read the issuer's own current-report list (ESPI on GPW)
+newest-first; a search-engine summary is not a source.
 
 Return only the requested facet's block.
 
@@ -27,8 +28,12 @@ Return only the requested facet's block.
     next_earnings:   # date + source(with date), [UNVERIFIED], or [N/A] + why
     ex_dividend:     # DPS + the ladder as published — last session with rights, ex-date, record
                      #   date, payment date — each sourced. [UNVERIFIED], or [N/A] + why
-    buyback:         # active programme: **price cap**, size, window, executing broker, last
-                     #   confirmed fills (date + price) — each sourced. [UNVERIFIED], or [N/A] + why
+    buyback:         # status first, as the company's LATEST report on the programme states it —
+                     #   `running` · `completed` · `expired` · `announced` · [N/A] + why · [UNVERIFIED]
+                     #   — with that report's number and date. Then the programme: **price cap**,
+                     #   budget, share count, window, executing broker, last confirmed fills
+                     #   (date + price) — each sourced. The AGM authorisation is not the
+                     #   programme: its ceiling and budget go on their own line, never merged.
     share_overhang:  # holders able to place a block (post-IPO PE, state, founder) + placement
                      #   history (date, size, price). Residual stake sourced or [UNVERIFIED]
     control:         # is control of the company contested? succession or inheritance conflict,
@@ -59,7 +64,7 @@ from historical items.
 - Work only on the ONE given instrument and only the requested facet.
 - **Every date/number: a confirmed source with its date, else `[UNVERIFIED]` — never infer.**
   `[UNVERIFIED]` = couldn't confirm; `[N/A]` = cannot exist for this instrument, with why.
-  Not interchangeable.
+  Not interchangeable. A field asked for and not found is `[UNVERIFIED]`, never dropped.
 - Prefer fresh data; state the date of every key figure.
 - `control` and `share_overhang` are different questions: who *could sell* a block, versus who
   *runs the company* and whether that is disputed. Answer both; never let one stand in for the other.
