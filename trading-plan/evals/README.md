@@ -64,9 +64,12 @@ unless the case sets `execution.model`. Read a trace's `model` fields before tru
 about it. Two earlier commits got this wrong: `d9719d6` put a behaviour change between two runs
 down to the `sonnet` alias moving, and `24675c5` said its trace confirmed the evals ran on the
 pinned Sonnet. Both runs were in fact executed by the default model; the change more likely came
-from that default moving (Opus 5 → 5.5) than from the alias. A case that must reproduce a specific
-run — every `instrument-research` replay — therefore pins `execution.model` to the model that run
-used.
+from that default moving (Opus 5 → 5.5) than from the alias. While the buyback fix was
+being measured, every `instrument-research` case pinned `execution.model` to the model the failing
+runs used, `claude-sonnet-5`, so the error could reproduce. With the comparison closed the cases
+follow the skill instead: `execution.model` is the model `SKILL.md` pins, `claude-sonnet-5-5`, so a
+run measures what production runs. The two move together — change the pin, change this line in
+every case. Checked before the switch: the replay and recon cases scored 25/25 on both models.
 
 **The judge.** `type: llm` graders are decided by a separate model, three votes, majority wins.
 The runner's default judge is Haiku; the Makefile sets `JUDGE_MODEL=claude-sonnet-5-5` instead,
