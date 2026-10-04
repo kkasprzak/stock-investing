@@ -1,11 +1,11 @@
 ---
 type: regex
 name: buyback-status-token
-pattern: '^buyback: (running|completed|expired|announced|\[N/A\]|\[UNVERIFIED\])'
+pattern: '^\s+status:\s+(running|completed|expired|announced|\[N/A\]|\[UNVERIFIED\])'
 flags: 'm'
 weight: 2
 ---
 
-The `buyback` field opens with a status from the closed vocabulary. This is a contract check, not
-evidence of the reading error the replay cases test: on a spec without the vocabulary it fails by
-construction, which is why no replay case carries it.
+The `buyback` field's `status:` line opens with a token from the closed vocabulary. Any indent and
+any run of spaces after the key: the model aligns columns, and the contract is the token, not the
+spacing.

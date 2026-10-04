@@ -212,10 +212,14 @@ authorisation's PLN 1.6 bn as the programme's budget, which one more line on `pr
 third was the judge's (below).
 A rule the model has to show its work for holds where a rule it only has to obey does not.
 
-`events-shape` is not in the table: it says nothing about the fix. Its regex allows one space after
-`buyback:`, the model aligns columns with several, and the case's instrument (V80A.DE, an ETF) has no
-buyback, so both specs answer `[N/A]`. It needs a new pattern for the structured field and an
-instrument with a real programme. Neither belongs in a comparison whose tests are frozen.
+`events-shape` is not in the table: it says nothing about the fix. Its old regex allowed one space
+after `buyback:`, the model aligns columns with several, and the case's instrument (V80A.DE, an ETF)
+has no buyback, so both specs answer `[N/A]`. After the comparison closed it got two patterns for
+the structured field: `buyback-status-token` reads the token on the `status:` line, at any indent,
+and `buyback-structure` requires the five lines in order before `share_overhang:`. Checked offline
+against the saved outputs of both arms, the structure pattern matches 0 of 30 answers on the prose
+spec and 29 of 30 on the structured one; the one miss had dropped its `programme:` line. It is still
+a format check on an instrument without a programme.
 
 The judge erred in both directions along the way. On the third version it passed an answer that gave
 the status as confirmed. On the fourth it failed an answer that, asked to reason item by item, it
