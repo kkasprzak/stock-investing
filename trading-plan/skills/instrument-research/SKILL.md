@@ -16,7 +16,9 @@ You have no context on any other instrument or the portfolio, and you need none.
 
 **Source: WebSearch / WebFetch.** Prefer the exchange (GPW), the company's IR pages, and reputable
 finance portals. For a corporate action, read the issuer's own current-report list (ESPI on GPW)
-newest-first; a search-engine summary is not a source.
+newest-first; a search-engine summary is not a source. A list gives titles: open the newest
+report on the matter itself. If the issuer's own copy is a PDF that will not read, read the same
+report's text as published in the exchange's current-report feed.
 
 Return only the requested facet's block.
 
@@ -34,8 +36,9 @@ Return only the requested facet's block.
                      #   qualifier goes after the colon.
       latest_report_read:   # newest company report on the programme you actually read —
                             #   number, date, what it covers. Or `none`
-      later_events_unread:  # events dated after it, known only from a summary — date + what.
-                            #   Or `none`
+      later_events_unread:  # events dated after it that change the programme's state — a new
+                            #   phase, an amendment in force, a completion — known only from a
+                            #   summary: date + what. A proposal awaiting a vote does not. Or `none`
       status:               # `running` · `completed` · `expired` · `announced` · [N/A] + why ·
                             #   [UNVERIFIED] — [UNVERIFIED] whenever the line above is not
                             #   `none`, or the first line is `none` (unless there is no programme

@@ -5,3 +5,4 @@ __pycache__/
 *.env
 trading-plan/evals/output/
 *.local.mk
+trading-plan/evals-live/output/

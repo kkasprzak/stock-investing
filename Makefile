@@ -16,6 +16,7 @@ OUT         := $(EVALS)/output
 RESULTS     := $(OUT)/results
 EXTRACT     := python3 $(EVALS)/scripts/extract_outputs.py
 SKILLS      := trading-plan/skills
+LIVE_OUT    := trading-plan/evals-live/output
 
 RUNS        ?= 5
 CASE        ?=
@@ -24,6 +25,7 @@ MAX_COST    ?= 12
 THRESHOLD   ?=
 JUDGE_MODEL ?= claude-sonnet-5-5
 CONCURRENCY ?= 4
+LIVE_RUNS   ?= 3
 
 -include evals.local.mk
 
@@ -42,7 +44,7 @@ EVAL_CMD     = claude plugin eval $(PLUGIN) \
                  $(CASE_FLAG) \
                  $(THRESH_FLAG)
 
-.PHONY: help evals quick case baseline outputs report test clean clean-temp check
+.PHONY: help evals quick case baseline live outputs report test clean clean-temp check
 
 help:
 	@echo "stock-investing"
@@ -51,6 +53,7 @@ help:
 	@echo "  make quick               one run per case — a smoke check"
 	@echo "  make case CASE=no-data   one named case (directory name under $(EVALS)/test-cases)"
 	@echo "  make baseline            also run a no-plugin arm and report the score delta"
+	@echo "  make live                the live suite (evals-live/): real web, $(LIVE_RUNS) runs — not reproducible"
 	@echo "  make outputs             re-run the extractor over the last results, no model calls"
 	@echo "  make report              open the HTML report from the last run"
 	@echo "  make test                offline unit tests for every skill"
@@ -84,6 +87,17 @@ case:
 baseline:
 	@$(MAKE) --no-print-directory evals ABLATION=with-without MAX_COST=12
 
+# The live suite is its own eval dir because the web is granted per invocation, not per case:
+# --allow-tools here would hand the network to every replay if they shared a directory. Its
+# results are not reproducible — the web moves — so it never runs as part of `make evals`.
+live: check
+	@claude plugin eval $(PLUGIN) --eval-dir evals-live \
+	    --allow-tools WebSearch WebFetch --ablation none \
+	    --runs $(LIVE_RUNS) --max-cost-usd $(MAX_COST) --judge-model $(JUDGE_MODEL) \
+	    --concurrency $(CONCURRENCY) --keep-temp --no-publish \
+	    --output-dir $(LIVE_OUT)/results; \
+	  status=$$?; $(EXTRACT) $(LIVE_OUT)/results $(LIVE_OUT)/runs; exit $$status
+
 outputs:
 	@$(EXTRACT)
 
@@ -101,7 +115,7 @@ test:
 	done
 
 clean: clean-temp
-	rm -rf $(OUT)
+	rm -rf $(OUT) $(LIVE_OUT)
 
 # --keep-temp leaves sealed sandboxes behind; they are mode 000 and need a chmod first.
 clean-temp:
