@@ -28,12 +28,22 @@ Return only the requested facet's block.
     next_earnings:   # date + source(with date), [UNVERIFIED], or [N/A] + why
     ex_dividend:     # DPS + the ladder as published — last session with rights, ex-date, record
                      #   date, payment date — each sourced. [UNVERIFIED], or [N/A] + why
-    buyback:         # status first, as the company's LATEST report on the programme states it —
-                     #   `running` · `completed` · `expired` · `announced` · [N/A] + why · [UNVERIFIED]
-                     #   — with that report's number and date. Then the programme: **price cap**,
-                     #   budget, share count, window, executing broker, last confirmed fills
-                     #   (date + price) — each sourced. The AGM authorisation is not the
-                     #   programme: its ceiling and budget go on their own line, never merged.
+    buyback:         # the company's own reports decide this field; a search summary or an
+                     #   article *about* a report is not one.
+      latest_report_read:   # newest company report on the programme you actually read —
+                            #   number, date, what it covers. Or `none`
+      later_events_unread:  # events dated after it, known only from a summary — date + what.
+                            #   Or `none`
+      status:               # `running` · `completed` · `expired` · `announced` · [N/A] + why ·
+                            #   [UNVERIFIED] — [UNVERIFIED] whenever the line above is not
+                            #   `none`, or the first line is `none` (unless there is no programme
+                            #   at all: then [N/A] + why)
+      authorisation:        # AGM ceiling, budget, window — never the programme
+      programme:            # price cap, budget, share count, window, executing broker, last
+                            #   confirmed fills (date + price) — each sourced or [UNVERIFIED];
+                            #   with later events unread, the cap is [UNVERIFIED]. Never the
+                            #   authorisation's ceiling or budget; if no phase's own budget is
+                            #   in a report you read, the budget is [UNVERIFIED]
     share_overhang:  # holders able to place a block (post-IPO PE, state, founder) + placement
                      #   history (date, size, price). Residual stake sourced or [UNVERIFIED]
     control:         # is control of the company contested? succession or inheritance conflict,
