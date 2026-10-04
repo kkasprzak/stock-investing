@@ -1,0 +1,122 @@
+url: https://www.bankier.pl/wiadomosc/ALLEGRO-EU-S-A-Allegro-informuje-o-transakcjach-zwiazanych-z-programem-skupu-akcji-wlasnych-przeprowadzonych-w-dniach-15-17-lipca-2026-r-9170819.html
+published: 2026-07-20 18:17
+
+class="o-article-content" data-io-article-url="https://www.bankier.pl/wiadomosc/ALLEGRO-EU-S-A-Allegro-informuje-o-transakcjach-zwiazanych-z-programem-skupu-akcji-wlasnych-przeprowadzonych-w-dniach-15-17-lipca-2026-r-9170819.html" data-utm-source-disable="false"> Spis treści:
+1. RAPORT BIEŻĄCY
+2. METADANE ESAP
+3. MESSAGE (ENGLISH VERSION)
+4. INFORMACJE O PODMIOCIE
+5. PODPISY OSÓB REPREZENTUJĄCYCH SPÓŁKĘ
+Spis załączników:
+Attachment_1__transaction_details_15.07-17.07.2026.pdf
+KOMISJA NADZORU FINANSOWEGO
+Raport bieżący nr
+32
+/
+2026
+Data sporządzenia:
+2026-07-20
+Skrócona nazwa emitenta
+ALLEGRO.EU S.A.
+Temat
+Allegro informuje o transakcjach związanych z programem skupu akcji własnych, przeprowadzonych w dniach 15 - 17 lipca 2026 r.
+Podstawa prawna
+Inne uregulowania
+Treść raportu:
+Podstawa prawna: Art. 2 ust. 2 i 3 Rozporządzenia delegowanego Komisji (UE) 2016/1052 z dnia 8 marca 2016 r.; Art. 5 ust. 3 Rozporządzenia MAR
+W nawiązaniu do raportu bieżącego nr 26/2026 z dnia 25 czerwca 2026 r. Rada Dyrektorów Allegro.eu informuje o transakcjach zawartych na akcjach własnych w dniach 15 - 17 lipca 2026 r. Informacje, zarówno w formie zbiorczej, jak i szczegółowej, prezentowane są w załączniku sporządzonym na podstawie informacji otrzymanych od Erste Bank Polska S.A. - Erste Biuro Maklerskie, firmy inwestycyjnej prowadzącej program skupu akcji własnych.
+Allegro.eu jest luksemburską spółką akcyjną (société anonyme), adres siedziby: 6, rue Eugène Ruppert, L-2453 Luksemburg, Wielkie Księstwo Luksemburga, R.C.S. Luksemburg: B214830.
+Załączniki
+Plik
+Opis
+Attachment_1__transaction_details_15.07-17.07.2026.pdf
+Ramy prawne
+Rodzaj informacji przekazanych przez podmiot
+TRANSD
+Nabycie lub zbycie przez emitenta w³asnych akcji
+RegulatoryData
+Organ zbierający dane odpowiedzialny za zbieranie informacji
+PLKNF
+Unikalny identyfikator danych
+Rodzaj przedkładanych informacji
+nowe (do zastosowania w przypadku nowych informacji)
+Dobrowolny lub obowiązkowy charakter przedłożonych informacji
+Data lub początek okresu, której lub którego dotyczą informacje
+2026-07-15
+Data lub koniec okresu, której lub którego dotyczą informacje
+2026-07-17
+Znacznik danych osobowych
+Macierzyste państwo członkowskie, w stosownych przypadkach
+PL
+DocumentReference
+Język, w którym przekazano informacje
+Oryginał (ORIG) czy tłumaczenie (TRAN)
+Numer referencyjny pliku danych
+PL
+ORIG
+SubmittingEntity
+Identyfikator podmiotu prawnego (LEI) dotyczący podmiotu przekazującego informacje - wypełnij w przypadku osób prawnych
+lub
+Imię i nazwisko, osoby która przekazała informacje - wypełnij w przypadku osób fizycznych
+222100VRLXV3FPMG4982
+RelatedEntity/LegalPerson
+Identyfikator podmiotu prawnego (LEI) przypisany do osoby prawnej, której dotyczą informacje
+Wielkość osoby prawnej, której dotyczą informacje
+Sektor(y) przemysłu, w których osoba fizyczna lub prawna, której te informacje dotyczą, prowadzi działalność gospodarczą
+222100VRLXV3FPMG4982
+Du¿a grupa
+(wg NACE): G
+MESSAGE (ENGLISH VERSION)
+Current report No. 32/2026
+20 July 2026
+Title: Allegro reports transactions related to the share buy-back
+program carried out from 15 to 17 July 2026.
+Legal basis: Article 2(2) and (3) of the Commission Delegated Regulation
+(EU) 2016/1052 of 8 March 2016, Article 5 (3) of the Market Abuse
+Regulation.
+With reference to the current report No. 26/2026 of 25 June 2026, the
+Board of Directors of Allegro.eu hereby reports transactions carried out
+in its own shares between 15 and 17 July 2026. Information, both in
+aggregated and detailed form, is presented in the attachment prepared on
+the basis of the information received from Erste Bank Polska S.A. -
+Erste Biuro Maklerskie acting as the investment firm in charge of
+executing the share buy-back program.
+Allegro.eu is a Luxembourg public limited liability company (société
+anonyme), registered office: 6, rue Eugène Ruppert, L-2453 Luxembourg,
+Grand Duchy of Luxembourg, R.C.S. Luxembourg: B214830.
+INFORMACJE O PODMIOCIE >>>
+ALLEGRO.EU SOCIETE ANONYME
+(pełna nazwa emitenta)
+ALLEGRO.EU S.A.
+Usługi inne (uin)
+(skrócona nazwa emitenta)
+(sektor wg. klasyfikacji GPW w W-wie)
+L-2453
+Luksemburg
+(kod pocztowy)
+(miejscowość)
+rue Eugène Ruppert
+6
+(ulica)
+(numer)
++352621525384
+(telefon)
+(fax)
+ir@allegro.eu
+www.allegro.eu
+(e-mail)
+(www)
+B214830
+(NIP)
+(REGON)
+PODPISY OSÓB REPREZENTUJĄCYCH SPÓŁKĘ
+Data
+Imię i Nazwisko
+Stanowisko/Funkcja
+Podpis
+2026-07-20
+Gary McGann
+Director
+2026-07-20
+Marcin Kuśmierz
+Director

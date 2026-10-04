@@ -1,0 +1,6 @@
+url: https://about.allegro.eu/news-releases/news-release-details/implementation-share-buyback-programme-allegroeu-satisfy-1
+prompt: Extract: buyback program details - price cap per share, total size/number of shares, window/validity dates, executing broker, any confirmed fills with dates and prices, and publication date of this release.
+
+The server returned HTTP 404 Not Found.
+
+The response body was not retrieved. If this URL requires authentication, use an authenticated tool (e.g. `gh` for GitHub, or an MCP-provided fetch tool) instead of WebFetch.

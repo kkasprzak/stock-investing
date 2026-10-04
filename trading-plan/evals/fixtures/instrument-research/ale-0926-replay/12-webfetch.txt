@@ -1,0 +1,30 @@
+url: https://www.globenewswire.com/news-release/2026/09/07/3357217/0/en/information-regarding-executed-transactions-within-the-framework-of-a-share-buyback-programme-outside-the-liquidity-agreement-from-31-august-to-4-september-2026.html
+prompt: Extract: buyback program price cap per share, total size (PLN and shares), window/validity dates, executing broker, and the confirmed fills in this period - dates, number of shares, prices (min/max/average).
+
+# Ayvens Share Buyback Program Summary
+
+**Price Cap & Program Size:**
+- Maximum program amount: EUR 450 million
+- No explicit per-share price cap stated
+- Program represents 14.0% completion as of September 4, 2026, totaling 1,447,550 shares (0.7% of share capital)
+
+**Window/Validity Dates:**
+- Announced: July 30, 2026
+- Start date: July 31, 2026
+- Reporting period: August 31 – September 4, 2026
+
+**Executing Broker:**
+- Shares purchased on multiple trading platforms including "Euronext Paris" (XPAR)
+- BNP Paribas Exane liquidity contract suspended during buyback
+
+**Confirmed Fills (Aug 31 – Sept 4, 2026):**
+
+| Date | Shares Purchased | Avg Price (EUR) | Price Range |
+|------|------------------|-----------------|------------|
+| Aug 31 | 248,000 | 11.2375 | 11.22–11.26 |
+| Sept 1 | 284,450 | 11.3887 | 11.36–11.43 |
+| Sept 2 | 294,500 | 11.2714 | 11.27–11.28 |
+| Sept 3 | 303,800 | 11.1764 | 11.17–11.18 |
+| Sept 4 | 316,800 | 11.1903 | 11.19–11.19 |
+
+**Total Period:** 1,447,550 shares at EUR 11.2484 average price

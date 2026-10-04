@@ -1,0 +1,14 @@
+url: https://www.bankier.pl/wiadomosc/ALLEGRO-EU-S-A-Allegro-informuje-o-transakcjach-zwiazanych-z-programem-skupu-akcji-wlasnych-przeprowadzonych-w-dniach-17-21-sierpnia-2026-r-9186364.html
+prompt: Extract the exact number of shares bought back, the price(s) paid, and the total value, for the buyback transactions conducted 17-21 August 2026 by Allegro.eu. Also note the executing broker if mentioned.
+
+# Allegro.eu Share Buyback Summary (17-21 August 2026)
+
+Based on the provided content, I can confirm that Allegro.eu conducted share buyback transactions during 17-21 August 2026. The report states:
+
+**Executing Broker:** "Erste Bank Polska S.A. - Erste Biuro Maklerskie" served as the investment firm managing the program.
+
+**Detailed Information:** The announcement references "Informacje, zarówno w formie zbiorczej, jak i szczegółowej" (information in both aggregated and detailed form) presented in an attachment document.
+
+However, **the specific data is unavailable** in this web page content. The detailed transaction information—including exact share quantities, prices paid, and total value—is contained in the attached PDF file ("Attachment_1__transaction_details_17.08-21.08.2026.pdf"), which is referenced but not transcribed in the provided text.
+
+To obtain the complete buyback details, you would need to access the PDF attachment directly from the original filing.

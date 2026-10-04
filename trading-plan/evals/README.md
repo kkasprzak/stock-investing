@@ -1,4 +1,4 @@
-# Evals — instrument-analysis
+# Evals
 
 These measure the **model's output**, not the code. The unit tests under
 `skills/stock-market-data/tests` check that a function computes what it claims; here we check
@@ -54,27 +54,53 @@ one leaves 0.875 and does not. The table's `PASS%` column is a separate, stricte
 share of runs in which *every* grader passed — and does not move with the threshold. CI gates on
 the score; watch `PASS%` so a tolerance does not hide a trend.
 
+## Which model runs what
+
+Two models are in play, and neither is the one a skill's frontmatter names.
+
+**The agent.** `model:` in a skill's `SKILL.md` does **not** reach an eval: every step of a run —
+the skill call, each read, the answer — goes to the agent's model, which is the runner's default
+unless the case sets `execution.model`. Read a trace's `model` fields before trusting any claim
+about it. Two earlier commits got this wrong: `d9719d6` put a behaviour change between two runs
+down to the `sonnet` alias moving, and `24675c5` said its trace confirmed the evals ran on the
+pinned Sonnet. Both runs were in fact executed by the default model; the change more likely came
+from that default moving (Opus 5 → 5.5) than from the alias. A case that must reproduce a specific
+run — every `instrument-research` replay — therefore pins `execution.model` to the model that run
+used.
+
+**The judge.** `type: llm` graders are decided by a separate model, three votes, majority wins.
+The runner's default judge is Haiku; the Makefile sets `JUDGE_MODEL=claude-sonnet-5-5` instead,
+because calibration showed Haiku cannot be trusted with a full answer. Fed one known-good
+`buyback:` field on its own, Haiku passed it six times out of six; fed the same field inside the
+whole seven-field answer it was taken from — about 5,000 characters, which is what a real run
+hands the judge — it failed it six times out of six. Sonnet 5.5 got every calibration text right,
+both directions, including a full known-bad answer: 36 of 36 votes, about a cent per verdict.
+
+The lesson generalises: calibrate a judge on what it will actually be shown. A calibration that
+hands it a trimmed excerpt is an easier test than the real one, and passes judges that will not.
+
 ## Layout
 
 ```
-fixtures/                        input — candle snapshots, one file per instrument
-test-cases/<case>/case.yaml      the case: scaffold_script + prompt
-test-cases/<case>/scaffold.sh    stages the fixture into the sandbox
-test-cases/<case>/graders/       graders, one file per assertion
+fixtures/<skill>/                     input, one directory per skill under test
+test-cases/<skill>/<case>/case.yaml   the case: scaffold_script + prompt
+test-cases/<skill>/<case>/scaffold.sh stages the fixture into the sandbox
+test-cases/<skill>/<case>/graders/    graders, one file per assertion
 scripts/                         extract_outputs.py
 output/runs/                     recovered raw outputs + index.tsv
 output/results/                  runner artifacts (pass --output-dir)
 ```
 
 Modelled on `skills/stock-market-data/tests/fixtures` — the same split between the input data
-and the thing that checks it. One directory per case, all of them under `test-cases/`; the
-runner discovers them recursively (`<eval dir>/**/case.yaml`), so the nesting costs nothing.
+and the thing that checks it. Both trees are split by skill, one directory per case; the runner
+discovers cases recursively (`<eval dir>/**/case.yaml`), so the nesting costs nothing, and
+`make case CASE=<name>` still filters by the case's name, not its path.
 
 Two constraints the runner imposes, both learned the hard way:
 
 - `scaffold_script` names a path **inside the case directory** — `../scripts/stage.sh` is
   rejected as escaping it, and the value is a path, not inline shell. Hence a `scaffold.sh`
-  per case, each anchoring on its own location to reach `../../fixtures/`.
+  per case, each anchoring on its own location to reach `../../../fixtures/<skill>/`.
 - Unknown top-level keys in `case.yaml` are **silently ignored**. A misplaced key looks like
   working configuration and does nothing — `scaffold_script` belongs under `context:`, not at
   the top level and not under `execution:`.
@@ -116,7 +142,7 @@ independently and a divergence from the caller's own level stays meaningful.
 ## Refreshing fixtures
 
 When the snapshot shape changes, re-capture from the same source and swap the files into
-`fixtures/` unedited. Never hand-assemble one — a hand-made fixture measures an idea of the
+`fixtures/instrument-analysis/` unedited. Never hand-assemble one — a hand-made fixture measures an idea of the
 input rather than the input.
 
 ## What these graders do not check
@@ -138,6 +164,63 @@ The `no-data` case checks the shape of the block — ten keys, in order, nothing
 not that the fixture was actually read. Its expected output is also what the model tends to emit
 when the fixture never reached the sandbox, so it can pass whether or not the snapshot was
 staged: run without `--scaffold` and it may go green for the wrong reason.
+
+## instrument-research: the buyback fix, before and after
+
+The commit that adds this section fixes the test set for the comparison: from here until the
+"after" line below, no case, fixture or reference changes — only the spec. A test changed after
+seeing its result proves nothing.
+
+**Before the fix** — 2026-10-04, at `4b831cb`, current spec, `claude-sonnet-5`, judge Sonnet 5.5,
+five runs each: `ale-0926-replay` 0/5 (0.40), every failure the 26 Sep error — a certain status
+resting on search summaries, the AGM authorisation read as the programme, Phase I's raised cap
+given as live; `ale-0829-recon` 0/5; controls `ale-0905-replay` 5/5, `ale-1003-replay` 4/5 (re-measured at `da98400`, see below),
+`ale-0921-evening-recon` 4/5 (one run called a completed programme "active"); `events-shape` 0/5,
+by construction.
+
+`ale-1003-replay`'s reference was corrected after this line was first written and before any
+result on the new spec existed: it had required a conclusion resting on a search-engine summary,
+which the fix declares is not a source, so the control would have failed for obeying the fix. It
+was re-measured on the current spec at `da98400`: 4/5 (0.88). The one failure is the judge's, not
+the model's — asked to explain itself, the judge opens with FAIL and then concludes the answer is
+correct; the runner asks for one word, so the second thought is lost. The same reference grades
+both arms.
+
+**After the fix** — 2026-10-04, at `0eff4a4`, same tests, same model and judge, five runs each:
+
+| case | before | 1 prose rule | 2 rule in the field | 3 + later events | 4 structured | 5 + programme line |
+|---|---|---|---|---|---|---|
+| `ale-0926-replay` | 0/5 | 0/5 | 1/5 | 1/5 | 3/5, pilot 4/5 | **5/5**, pilot 5/5 |
+| `ale-0829-recon` | 0/5 | 3/5 | 5/5 | 5/5 | 5/5 | **5/5** |
+| `ale-0905-replay` | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
+| `ale-1003-replay` | 4/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
+| `ale-0921-evening-recon` | 4/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
+
+The fix took five versions of the spec. Only the first (`bb03ba9`) and the last (`0eff4a4`) were
+committed; the three between were measured on the working tree and are recorded only here, which
+is the reason to keep them in the table. The first
+three state a rule in prose: a search summary is not a source, then the same rule inside the
+`buyback` field, then a sentence saying a later event known only from a summary leaves the newest
+report out of date. The model read each one and reasoned around it. In `ale-0926-replay` it took a
+14 September transaction report as "the latest report" and wrote `running`, while a summary in the
+same inputs reported Phase II on 22 September.
+
+What worked was making the evidence part of the output. The field now opens with
+`latest_report_read` and `later_events_unread`, and the status follows from them. On the first
+structured version every run of 0926 gave `[UNVERIFIED]`. Of its failures, two filed the
+authorisation's PLN 1.6 bn as the programme's budget, which one more line on `programme` closed; the
+third was the judge's (below).
+A rule the model has to show its work for holds where a rule it only has to obey does not.
+
+`events-shape` is not in the table: it says nothing about the fix. Its regex allows one space after
+`buyback:`, the model aligns columns with several, and the case's instrument (V80A.DE, an ETF) has no
+buyback, so both specs answer `[N/A]`. It needs a new pattern for the structured field and an
+instrument with a real programme. Neither belongs in a comparison whose tests are frozen.
+
+The judge erred in both directions along the way. On the third version it passed an answer that gave
+the status as confirmed. On the fourth it failed an answer that, asked to reason item by item, it
+passed twice. Both are long answers near the line, and the runner takes one word per vote. A single
+run of five is a sample, not a verdict: read the answers behind a score before acting on it.
 
 ## Further reading
 

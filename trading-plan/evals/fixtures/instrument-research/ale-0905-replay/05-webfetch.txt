@@ -1,0 +1,6 @@
+url: https://about.allegro.eu/calendar
+prompt: Find the next scheduled financial results / earnings report date for Allegro.eu, and any other upcoming corporate calendar events (AGM, dividend dates). Report exact dates as published.
+
+The server returned HTTP 404 Not Found.
+
+The response body was not retrieved. If this URL requires authentication, use an authenticated tool (e.g. `gh` for GitHub, or an MCP-provided fetch tool) instead of WebFetch.

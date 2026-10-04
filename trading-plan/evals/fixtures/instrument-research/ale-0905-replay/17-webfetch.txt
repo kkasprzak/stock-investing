@@ -1,0 +1,23 @@
+url: https://www.wirtualnemedia.pl/allegro-kurs-akcji-na-gieldzie-skup-w-sierpniu-2026-roku,7317201017755712a
+prompt: Extract details on Allegro.eu's share buyback activity in August 2026: total PLN spent, number of shares bought, average price per share, and dates of transactions.
+
+# Allegro Share Buyback Activity - August 2026
+
+Based on the article, here are the key details of Allegro's share repurchase program:
+
+**Total Expenditure and Shares:**
+"1,312 mln swoich walorów, płacąc 58,73 mln zł" (1.312 million shares purchased for 58.73 million PLN)
+
+**Transaction Breakdown:**
+
+| Date | Shares Acquired | Amount Spent | Price Per Share |
+|------|-----------------|--------------|-----------------|
+| August 3 | 796,300 | 35.57 million PLN | 44.67 PLN |
+| August 4 | 117,500 | 5.25 million PLN | 44.71 PLN |
+| August 5 | 398,100 | 17.9 million PLN | 44.97 PLN |
+
+**Program Context:**
+The company initiated the buyback in mid-July, with the board authorizing up to 800 million PLN for the initial phase, with a maximum price of 45 PLN per share (excluding broker fees).
+
+**Stock Performance:**
+By the article's publication date, Allegro shares traded at 45.95 PLN, representing a 23.2% gain over the previous 12 months.

@@ -1,0 +1,15 @@
+url: https://about.allegro.eu/shareholders/
+prompt: List current major shareholders of Allegro.eu with their percentage stakes and the date of the data, and any recent placement/block sale history with dates, sizes, prices.
+
+# Allegro.eu Major Shareholders
+
+**Current Shareholders (as of July 21, 2026):**
+
+1. **Nationale-Nederlanden Powszechne Towarzystwo Emerytalne S.A.** - 10.06% stake (102.5M shares)
+2. **BlackRock, Inc.** - 5.72% stake (58.3M shares)
+3. **Free Float** - 83.88% stake (853.8M shares)
+4. **Allegro.eu SA Treasury Shares** - 0.33% stake (3.4M shares, non-voting)
+
+**Total shares:** 1.02 billion
+
+The webpage provides no information regarding recent placement or block sale history with specific dates, sizes, or pricing details.

@@ -1,0 +1,16 @@
+url: https://about.allegro.eu/investors/shareholders/
+prompt: Extract the current shareholding structure of Allegro.eu: list each significant shareholder (Cinven/Cidinan, Permira, Mid Europa, founders, any others) with their exact percentage stake and number of shares, plus free float percentage, and the date this data is as of.
+
+# Allegro.eu Shareholding Structure
+
+Based on the webpage content dated **21 July 2026**, the current shareholding structure is:
+
+| Shareholder | Shares | % of Capital | Voting % |
+|---|---|---|---|
+| Nationale-Nederlanden PTE S.A. | 102,501,334 | 10.06% | 10.10% |
+| BlackRock, Inc. | 58,262,224 | 5.72% | 5.74% |
+| Allegro.eu SA Treasury Shares | 3,372,055 | 0.33% | 0.00% |
+| Free Float | 853,826,264 | 83.88% | 84.15% |
+| **Total** | **1,017,961,877** | **100.00%** | **100.00%** |
+
+**Key findings:** The webpage does not list Cinven, Cidinan, Permira, Mid Europa, or founders as current major shareholders. The dominant investor is Nationale-Nederlanden Powszechne Towarzystwo Emerytalne S.A. (a Polish pension fund), followed by BlackRock. The data indicates "The table shows the total number of shares admitted for trading" with the structure current as of the specified date.

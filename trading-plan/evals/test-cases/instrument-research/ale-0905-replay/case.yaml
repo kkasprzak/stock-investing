@@ -1,0 +1,16 @@
+schema_version: "1.0"
+name: ale-0905-replay
+runs: 5
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-sonnet-5
+  max_turns: 10
+  timeout_seconds: 600
+  allowed_tools: [Skill, Read, Glob]
+  prompt: |
+    Follow the trading-plan:instrument-research skill, facet `events`, for ONE instrument:
+    ALE.PL (Allegro.eu, GPW). Today is 2026-09-05.
+    The files in ./sources/ are the web results you obtained this run — each is one search or
+    one fetched page, as returned. They are your only sources; do not search the web.
+    Return the facet block the skill specifies.

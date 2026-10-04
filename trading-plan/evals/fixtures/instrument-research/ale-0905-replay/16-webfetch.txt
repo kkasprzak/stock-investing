@@ -1,0 +1,18 @@
+url: https://www.bankier.pl/wiadomosc/Allegro-eu-chce-w-pierwszej-fazie-skupic-do-42-1-mln-akcji-wlasnych-9158122.html
+prompt: Extract exact details of Allegro.eu's Phase 1 share buyback programme announced: number of shares, PLN budget, maximum price per share, execution window dates, and executing broker.
+
+# Allegro.eu Phase 1 Share Buyback Programme Details
+
+**Number of Shares:** Up to 42,105,263 shares
+
+**Budget:** Maximum 800 million PLN
+
+**Maximum Price per Share:** 45 PLN
+
+**Execution Window:** 
+- Earliest start: July 15, 2026
+- Latest completion: June 25, 2027
+
+**Executing Broker:** Erste Bank Polska - Erste Biuro Maklerskie
+
+According to the announcement, Allegro's Board of Directors adopted this programme, with the company stating it will "conduct Phase I of the share buyback programme" through the designated broker over the specified twelve-month period.

@@ -1,0 +1,8 @@
+url: https://www.marketscreener.com/quote/stock/ALLEGRO-EU-S-A-119083493/calendar/
+prompt: What is the next scheduled earnings/results date for Allegro.eu (ALE)? Give the exact date and event name.
+
+Based on the content provided, the next scheduled earnings date for Allegro.eu (ALE) is:
+
+**November 12, 2026 - Earnings release - Q3 2026**
+
+This is listed under "Upcoming events on Allegro.eu S.A." The company will release its third quarter 2026 financial results on this date.
