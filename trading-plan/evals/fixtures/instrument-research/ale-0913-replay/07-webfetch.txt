@@ -1,6 +1,0 @@
-url: https://about.allegro.eu/calendar
-prompt: List all upcoming financial calendar events for Allegro.eu in 2026, especially any dates in September, October, and November 2026 (earnings, results, business updates). Give exact dates and event descriptions.
-
-The server returned HTTP 404 Not Found.
-
-The response body was not retrieved. If this URL requires authentication, use an authenticated tool (e.g. `gh` for GitHub, or an MCP-provided fetch tool) instead of WebFetch.
