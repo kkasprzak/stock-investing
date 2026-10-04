@@ -1,6 +1,20 @@
-# Expected `buyback:` — ale-0913-replay
+---
+type: llm
+name: buyback-matches-reference
+weight: 3
+---
 
-Reference answer for the `buyback` field of facet `events`, ALE.PL, as of **2026-09-13**, derived
+You are judging one answer from the `instrument-research` skill. Judge **only its `buyback` field**
+against the reference below.
+
+PASS only if that field satisfies every item under "Must state" and contradicts no item under
+"Must not state". Ignore everything under "Not required". Wording, order, formatting, a leading
+status token or its absence, and the facet's other fields may all differ. If a required claim cannot
+be settled from the answer alone, FAIL.
+
+# Expected `buyback:` — ale-0905-replay
+
+Reference answer for the `buyback` field of facet `events`, ALE.PL, as of **2026-09-05**, derived
 **only from the files in this case's fixture directory**. A fact that is true but absent from
 those files is never required. Wording, order, format and the other fields of the facet are
 free; no particular status token is required.
