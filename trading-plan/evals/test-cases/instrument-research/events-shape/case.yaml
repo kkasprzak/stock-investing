@@ -4,6 +4,7 @@ runs: 5
 execution:
   model: claude-sonnet-5
   max_turns: 10
+  timeout_seconds: 600
   allowed_tools: [Skill]
   prompt: |
     Follow the trading-plan:instrument-research skill, facet `events`, for ONE instrument:

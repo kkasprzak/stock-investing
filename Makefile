@@ -23,6 +23,7 @@ ABLATION    ?= none
 MAX_COST    ?= 5
 THRESHOLD   ?=
 JUDGE_MODEL ?= claude-sonnet-5-5
+CONCURRENCY ?= 4
 
 -include evals.local.mk
 
@@ -33,6 +34,7 @@ EVAL_CMD     = claude plugin eval $(PLUGIN) \
                  --ablation $(ABLATION) \
                  --max-cost-usd $(MAX_COST) \
                  --judge-model $(JUDGE_MODEL) \
+                 --concurrency $(CONCURRENCY) \
                  --scaffold \
                  --keep-temp \
                  --no-publish \
@@ -55,7 +57,7 @@ help:
 	@echo "  make clean               remove $(OUT) and any kept eval sandboxes"
 	@echo
 	@echo "  variables: RUNS=$(RUNS) ABLATION=$(ABLATION) MAX_COST=$(MAX_COST) CASE=$(CASE) THRESHOLD=$(THRESHOLD)"
-	@echo "             JUDGE_MODEL=$(JUDGE_MODEL)"
+	@echo "             JUDGE_MODEL=$(JUDGE_MODEL) CONCURRENCY=$(CONCURRENCY)"
 	@echo "  example:   make evals RUNS=10 MAX_COST=12"
 
 # No pre-flight gate check: `--help` answers even when the command is gated off, and the
