@@ -1,0 +1,20 @@
+url: https://www.marketscreener.com/quote/stock/ALLEGRO-EU-S-A-119083493/news/Allegro-eu-S-A-announces-an-Equity-Buyback-for-3-473-726-shares-for-PLN-156-32-million-48472110/
+prompt: Extract: date of this announcement, buyback program details - price cap per share, size (shares/PLN), window/validity dates, executing broker, any confirmed fills with dates/prices.
+
+# Allegro.eu S.A. Equity Buyback - Key Details
+
+**Announcement Date:** November 25, 2024
+
+**Program Size:** 3,473,726 shares | PLN 156.32 million
+
+**Price Cap:** PLN 45 per share maximum
+
+**Validity Period:** Through May 31, 2025
+
+**Execution Method:** The company will repurchase shares at prices exceeding "the higher of the price of the last independent trade and the highest current independent purchase bid on the regulated market of the WSE"
+
+**Intended Use:** The repurchased shares will support an employee incentive plan
+
+**Executing Venue:** Warsaw Stock Exchange (WSE)
+
+No specific broker execution details, confirmed fills, or transaction dates were disclosed in this announcement.

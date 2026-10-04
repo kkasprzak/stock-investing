@@ -1,0 +1,8 @@
+url: https://about.allegro.eu/investors/financial-results/
+prompt: What is the next scheduled quarterly results / earnings release date for Allegro.eu? Give exact date.
+
+Based on the web page content provided, I cannot find a scheduled date for the next quarterly earnings release. 
+
+The page displays historical financial results organized by year and quarter (2026, 2025, 2024, etc.), with the most recent results being Q2 2026. However, there is no announcement or calendar entry indicating when the next quarterly earnings will be released.
+
+To find this information, you would likely need to check Allegro's investor calendar or contact their investor relations department directly.

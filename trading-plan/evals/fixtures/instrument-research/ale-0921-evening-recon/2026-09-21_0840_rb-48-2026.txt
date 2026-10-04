@@ -1,0 +1,148 @@
+url: https://www.bankier.pl/wiadomosc/ALLEGRO-EU-S-A-Zmiana-warunkow-Fazy-I-Programu-Skupu-Akcji-w-celu-umorzenia-akcji-i-obnizenia-kapitalu-zakladowego-Spolki-podwyzszenie-maksymalnej-ceny-nabycia-do-50-zl-9199911.html
+published: 2026-09-21 08:40
+
+class="o-article-content" data-io-article-url="https://www.bankier.pl/wiadomosc/ALLEGRO-EU-S-A-Zmiana-warunkow-Fazy-I-Programu-Skupu-Akcji-w-celu-umorzenia-akcji-i-obnizenia-kapitalu-zakladowego-Spolki-podwyzszenie-maksymalnej-ceny-nabycia-do-50-zl-9199911.html" data-utm-source-disable="false"> Spis treści:
+1. RAPORT BIEŻĄCY
+2. METADANE ESAP
+3. MESSAGE (ENGLISH VERSION)
+4. INFORMACJE O PODMIOCIE
+5. PODPISY OSÓB REPREZENTUJĄCYCH SPÓŁKĘ
+KOMISJA NADZORU FINANSOWEGO
+Raport bieżący nr
+48
+/
+2026
+Data sporządzenia:
+2026-09-21
+Skrócona nazwa emitenta
+ALLEGRO.EU S.A.
+Temat
+Zmiana warunków Fazy I Programu Skupu Akcji w celu umorzenia akcji i obniżenia kapitału zakładowego Spółki - podwyższenie maksymalnej ceny nabycia do 50 zł
+Podstawa prawna
+Inne uregulowania
+Treść raportu:
+Podstawa prawna: Rozporządzenie w sprawie nadużyć na rynku (UE) nr 596/2014 z dnia 16 kwietnia 2014 r., rozporządzenie delegowane Komisji (UE) 2016/1052 z dnia 8 marca 2016 r., luksemburska ustawa o spółkach z dnia 10 sierpnia 1915 r. z późniejszymi zmianami oraz prawo luksemburskie z dnia 11 stycznia 2008 r. w sprawie wymogów przejrzystości w odniesieniu do informacji o emitentach, których papiery wartościowe są dopuszczone do obrotu na rynku regulowanym, z późniejszymi zmianami.
+W nawiązaniu do raportu bieżącego nr 26/2026 z dnia 25 czerwca 2026 r. informującego o przyjęciu i wdrożeniu pierwszej fazy programu skupu akcji na otwartym rynku („Faza I” lub „Program”), Rada Dyrektorów Allegro.eu („Spółka”) niniejszym informuje o decyzji o zmianie warunków Fazy I poprzez podwyższenie maksymalnej ceny nabycia za jedną akcję.
+Rada Dyrektorów postanowiła podwyższyć maksymalną cenę, po której Spółka może nabywać akcje własne w ramach Fazy I, z dotychczasowego limitu 45,00 PLN do 50,00 PLN za akcję. Nowa maksymalna cena nabycia ma zastosowanie do transakcji zawieranych od dnia 21 września 2026 r.
+Nowa maksymalna cena nabycia w wysokości 50,00 PLN w pełni mieści się w parametrach i limitach zatwierdzonych Uchwałą nr 21 Zwyczajnego Walnego Zgromadzenia Spółki z dnia 25 czerwca 2026 r.
+Decyzja o podwyższeniu maksymalnej ceny nabycia w ramach Fazy I jest następstwem niedawnego wzrostu ceny akcji Spółki na Giełdzie Papierów Wartościowych w Warszawie, która zbliżyła się do dotychczasowego limitu cenowego, a następnie go przekroczyła.
+Wszystkie pozostałe warunki i parametry Fazy I Programu ogłoszone 25 czerwca 2026 r. pozostają niezmienione, tj.:
+1. cel skupu akcji: umorzenie akcji i następujące po nim obniżenie kapitału zakładowego Spółki;
+2. maksymalna kwota środków pieniężnych przeznaczonych na Fazę I: 800 000 000,00 PLN (z wyłączeniem prowizji maklerskich);
+3. maksymalna liczba akcji, które mogą zostać nabyte w ramach Fazy I: 42 105 263 akcje (z zastrzeżeniem ogólnego limitu upoważnienia udzielonego przez ZWZ wynoszącego 84 210 526 akcji);
+4. czas trwania Fazy I: program zakończy się nie później niż 25 czerwca 2027 r.
+Allegro.eu jest luksemburską spółką akcyjną (société anonyme), z siedzibą pod adresem: 6, rue Eugène Ruppert, L-2453 Luksemburg, Wielkie Księstwo Luksemburga, R.C.S. Luksemburg: B214830.
+Ramy prawne
+Rodzaj informacji przekazanych przez podmiot
+TRANSD
+Informacje poufne
+RegulatoryData
+Organ zbierający dane odpowiedzialny za zbieranie informacji
+PLKNF
+Unikalny identyfikator danych
+Rodzaj przedkładanych informacji
+nowe (do zastosowania w przypadku nowych informacji)
+Dobrowolny lub obowiązkowy charakter przedłożonych informacji
+Data lub początek okresu, której lub którego dotyczą informacje
+2026-09-21
+Data lub koniec okresu, której lub którego dotyczą informacje
+2026-09-21
+Znacznik danych osobowych
+Macierzyste państwo członkowskie, w stosownych przypadkach
+PL
+DocumentReference
+Język, w którym przekazano informacje
+Oryginał (ORIG) czy tłumaczenie (TRAN)
+Numer referencyjny pliku danych
+PL
+ORIG
+SubmittingEntity
+Identyfikator podmiotu prawnego (LEI) dotyczący podmiotu przekazującego informacje - wypełnij w przypadku osób prawnych
+lub
+Imię i nazwisko, osoby która przekazała informacje - wypełnij w przypadku osób fizycznych
+222100VRLXV3FPMG4982
+RelatedEntity/LegalPerson
+Identyfikator podmiotu prawnego (LEI) przypisany do osoby prawnej, której dotyczą informacje
+Wielkość osoby prawnej, której dotyczą informacje
+Sektor(y) przemysłu, w których osoba fizyczna lub prawna, której te informacje dotyczą, prowadzi działalność gospodarczą
+222100VRLXV3FPMG4982
+Du¿a grupa
+(wg NACE): G
+MESSAGE (ENGLISH VERSION)
+Current report No. 48/2026
+Date: 21 September 2026
+Subject: Amendment to the terms of Phase I of the Share Buyback Program
+for the purpose of share cancellation and reduction of the Company’s
+share capital – increase of the maximum purchase price to PLN 50
+Legal basis: Market Abuse Regulation (EU) No 596/2014 of 16 April 2014
+("MAR"), Commission Delegated Regulation (EU) 2016/1052 of 8 March 2016,
+Luxembourg company law dated 10 August 1915, as amended from time to
+time, and Luxembourg law dated 11 January 2008 on transparency
+requirements in relation to information about issuers whose securities
+are admitted to trading on a regulated market, as amended.
+Further to current report no. 26/2026 dated 25 June 2026 announcing the
+adoption and implementation of the first phase of the open-market share
+buyback program ("Phase I" or the "Program"), the Board of Directors of
+Allegro.eu (the "Company") hereby announces its decision to amend the
+terms of Phase I by increasing the maximum purchase price per share.
+The Board of Directors has resolved to increase the maximum price at
+which the Company may acquire its own shares under Phase I from the
+previous limit of PLN 45.00 to PLN 50.00 per share. The new maximum
+purchase price applies to transactions executed from 21 September 2026.
+The new maximum purchase price of PLN 50.00 remains fully within the
+parameters and limits authorized by Resolution No. 21 of the Annual
+General Meeting of the Company dated 25 June 2026.
+The decision to increase the maximum purchase price under Phase I
+follows the recent appreciation of the Company’s share price on the
+Warsaw Stock Exchange, which approached and subsequently exceeded the
+previous price cap.
+All other terms and parameters of Phase I of the Program announced on 25
+June 2026 - remain unchanged, i.e.:
+1. the purpose of the share buyback: the cancellation of shares and
+subsequent reduction of the Company’s share capital;
+2. the maximum pecuniary amount allocated to Phase I: PLN 800,000,000.00
+(excluding brokerage commissions);
+3. the maximum number of shares to be acquired under Phase I: 42,105,263
+shares (subject to the overall AGM authorisation cap of 84,210,526
+shares);
+4. duration of Phase I: the programme will end no later than 25 June
+2027.
+Allegro.eu is a Luxembourg public limited liability company (société
+anonyme), registered office: 6, rue Eugène Ruppert, L-2453 Luxembourg,
+Grand Duchy of Luxembourg, R.C.S. Luxembourg: B214830.
+INFORMACJE O PODMIOCIE >>>
+ALLEGRO.EU SOCIETE ANONYME
+(pełna nazwa emitenta)
+ALLEGRO.EU S.A.
+Usługi inne (uin)
+(skrócona nazwa emitenta)
+(sektor wg. klasyfikacji GPW w W-wie)
+L-2453
+Luksemburg
+(kod pocztowy)
+(miejscowość)
+rue Eugène Ruppert
+6
+(ulica)
+(numer)
++352621525384
+(telefon)
+(fax)
+ir@allegro.eu
+www.allegro.eu
+(e-mail)
+(www)
+B214830
+(NIP)
+(REGON)
+PODPISY OSÓB REPREZENTUJĄCYCH SPÓŁKĘ
+Data
+Imię i Nazwisko
+Stanowisko/Funkcja
+Podpis
+2026-09-21
+Gary McGann
+Director
+2026-09-21
+Jonathan Eastick
+Director

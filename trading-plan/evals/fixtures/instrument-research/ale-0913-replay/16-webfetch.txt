@@ -1,0 +1,23 @@
+url: https://www.parkiet.com/handel-i-konsumpcja/art45091251-dziesiate-abb-w-allegro-jakie-wnioski-z-niego-plyna
+prompt: Extract: exact date of the Mepinan ABB sale of 4.3 million Allegro shares, price per share, whether this was Mid Europa's entire remaining stake, and any summary of prior ABB transactions in Allegro (dates, sellers, sizes) mentioned in the article. Also note if it says whether any pre-IPO PE investor (Cinven, Permira, Mid Europa/Mepinan) still holds shares after this.
+
+# Allegro ABB Transaction Summary
+
+**Date of Mepinan Sale:** The article was updated on September 13, 2026, reporting that Mepinan was offering 4.3 million shares via ABB. No specific completion date is provided.
+
+**Price Per Share:** Not disclosed. The article states: "Na razie nie ma informacji, jaka jest cena sprzedaży w najnowszym ABB" (currently there is no information about the selling price in the latest ABB).
+
+**Stake Size:** The 4.3 million shares represent "niespełna 0,5 proc. całego kapitału Allegro" (nearly 0.5% of Allegro's total capital). The article does not confirm whether this exhausts Mepinan's remaining position.
+
+**Prior ABB Transactions Mentioned:**
+- March 2021 at 60 PLN
+- June 2023 at 32.25 PLN
+- Fall 2023 at 29 PLN
+- Spring 2024 at 29.25 PLN (1.9 billion PLN value)
+- April 2025 at 29.25 PLN
+- June 2025 at 33 PLN
+- December 2025 at 30.1 PLN
+- April 2026 at 25.6 PLN
+- June 2026 at 33.6 PLN
+
+**Pre-IPO Investor Status:** The article does not specify whether any pre-IPO PE investors (Cinven, Permira, Mid Europa/Mepinan) retain shareholdings after this transaction.

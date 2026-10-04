@@ -1,0 +1,129 @@
+url: https://www.bankier.pl/wiadomosc/ALLEGRO-EU-S-A-Allegro-informuje-o-zakonczeniu-Fazy-I-programu-skupu-akcji-wlasnych-9200322.html
+published: 2026-09-21 18:25
+
+class="o-article-content" data-io-article-url="https://www.bankier.pl/wiadomosc/ALLEGRO-EU-S-A-Allegro-informuje-o-zakonczeniu-Fazy-I-programu-skupu-akcji-wlasnych-9200322.html" data-utm-source-disable="false"> Spis treści:
+1. RAPORT BIEŻĄCY
+2. METADANE ESAP
+3. MESSAGE (ENGLISH VERSION)
+4. INFORMACJE O PODMIOCIE
+5. PODPISY OSÓB REPREZENTUJĄCYCH SPÓŁKĘ
+KOMISJA NADZORU FINANSOWEGO
+Raport bieżący nr
+50
+/
+2026
+Data sporządzenia:
+2026-09-21
+Skrócona nazwa emitenta
+ALLEGRO.EU S.A.
+Temat
+Allegro informuje o zakończeniu Fazy I programu skupu akcji własnych
+Podstawa prawna
+Art. 17 ust. 1 Rozporz¹dzenia MAR – informacje poufne
+Treść raportu:
+Rada Dyrektorów Allegro.eu („Spółka”) informuje, że w następstwie przeprowadzenia ostatniej transakcji w dniu 21 września 2026 r. Faza I programu skupu akcji własnych o wartości 800 mln zł, ogłoszonego w dniu 25 czerwca 2026 r. (patrz: raport bieżący nr 26/2026), została zakończona.
+Podsumowanie realizacji Fazy I:
+1. Liczba nabytych akcji: 17 879 330 akcji zwykłych, stanowiących 1,76% kapitału zakładowego Spółki (dających prawo do 1,76% ogólnej liczby głosów);
+2. Łączna wartość transakcji: 799 999 982,52 PLN (bez uwzględnienia kosztów transakcyjnych);
+3. Średnia cena zakupu: 44,74 PLN za akcję;
+4. Okres realizacji skupu: od 15 lipca 2026 r. do 21 września 2026 r.;
+5. Miejsce obrotu: GPW.
+Po zakończeniu Fazy I Spółka posiada łącznie 18 054 526 akcji własnych, stanowiących 1,77% jej kapitału zakładowego i ogólnej liczby głosów, z czego 175.196 akcji własnych przeznaczonych jest do realizacji Programu Motywacyjnego Allegro (Allegro Incentive Plan).
+Allegro.eu jest luksemburską spółką akcyjną (société anonyme), adres siedziby: 6, rue Eugène Ruppert, L-2453 Luksemburg, Wielkie Księstwo Luksemburga, R.C.S. Luksemburg: B214830.
+Ramy prawne
+Rodzaj informacji przekazanych przez podmiot
+TRANSD
+Informacje poufne
+RegulatoryData
+Organ zbierający dane odpowiedzialny za zbieranie informacji
+PLKNF
+Unikalny identyfikator danych
+Rodzaj przedkładanych informacji
+nowe (do zastosowania w przypadku nowych informacji)
+Dobrowolny lub obowiązkowy charakter przedłożonych informacji
+Data lub początek okresu, której lub którego dotyczą informacje
+2026-07-15
+Data lub koniec okresu, której lub którego dotyczą informacje
+2026-09-21
+Znacznik danych osobowych
+Macierzyste państwo członkowskie, w stosownych przypadkach
+PL
+DocumentReference
+Język, w którym przekazano informacje
+Oryginał (ORIG) czy tłumaczenie (TRAN)
+Numer referencyjny pliku danych
+PL
+ORIG
+SubmittingEntity
+Identyfikator podmiotu prawnego (LEI) dotyczący podmiotu przekazującego informacje - wypełnij w przypadku osób prawnych
+lub
+Imię i nazwisko, osoby która przekazała informacje - wypełnij w przypadku osób fizycznych
+222100VRLXV3FPMG4982
+RelatedEntity/LegalPerson
+Identyfikator podmiotu prawnego (LEI) przypisany do osoby prawnej, której dotyczą informacje
+Wielkość osoby prawnej, której dotyczą informacje
+Sektor(y) przemysłu, w których osoba fizyczna lub prawna, której te informacje dotyczą, prowadzi działalność gospodarczą
+222100VRLXV3FPMG4982
+Du¿a grupa
+(wg NACE): G
+MESSAGE (ENGLISH VERSION)
+Current report No. 50/2026
+21 September 2026
+Title: Allegro announces the completion of Phase I of the share buyback
+program
+Legal basis: Article 17 of MAR - inside information
+The Board of Directors of Allegro.eu (the “Company”) informs that,
+following the execution of the final transaction on 21 September 2026,
+Phase I of the PLN 800,000,000 share buyback program launched on 25 June
+2026 (see current report No. 26/2026) has been fully completed .
+Phase I execution summary:
+1. Number of shares acquired: 17,879,330 ordinary shares, representing
+1.76% of the Company's issued share capital (representing 1.76% of the
+total voting rights);
+2. Total consideration: PLN 799,999,982.52 (excluding transaction costs);
+3. Average purchase price: PLN 44.74 per share;
+4. Period of repurchases: 15 July 2026 to 21 September 2026;
+5. Venue of trading - WSE.
+Following the completion of Phase I, the Company holds a total of
+18,054,526 treasury shares, representing 1.77% of its share capital and
+total voting rights, of which 175,196 treasury shares are held to
+satisfy Allegro Incentive Plan.
+Allegro.eu is a Luxembourg public limited liability company (société
+anonyme), registered office: 6, rue Eugène Ruppert, L-2453 Luxembourg,
+Grand Duchy of Luxembourg, R.C.S. Luxembourg: B214830.
+INFORMACJE O PODMIOCIE >>>
+ALLEGRO.EU SOCIETE ANONYME
+(pełna nazwa emitenta)
+ALLEGRO.EU S.A.
+Usługi inne (uin)
+(skrócona nazwa emitenta)
+(sektor wg. klasyfikacji GPW w W-wie)
+L-2453
+Luksemburg
+(kod pocztowy)
+(miejscowość)
+rue Eugène Ruppert
+6
+(ulica)
+(numer)
++352621525384
+(telefon)
+(fax)
+ir@allegro.eu
+www.allegro.eu
+(e-mail)
+(www)
+B214830
+(NIP)
+(REGON)
+PODPISY OSÓB REPREZENTUJĄCYCH SPÓŁKĘ
+Data
+Imię i Nazwisko
+Stanowisko/Funkcja
+Podpis
+2026-09-21
+Gary McGann
+Director
+2026-09-21
+Marcin Kuśmierz
+Director

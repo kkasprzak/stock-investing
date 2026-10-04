@@ -1,0 +1,20 @@
+url: https://www.bankier.pl/wiadomosc/ALLEGRO-EU-S-A-Aktualizacja-dat-publikacji-wybranych-informacji-finansowych-oraz-aktualizacji-biznesowych-w-roku-kalendarzowym-2026-9079701.html
+prompt: Extract the updated exact dates for publication of financial information and business updates for Allegro.eu in calendar year 2026, and the date this announcement itself was published.
+
+# Allegro.eu Financial Publication Schedule Updates for 2026
+
+**Announcement Publication Date:** February 5, 2026
+
+## Updated Publication Dates:
+
+**Q1 2026 Results:**
+- "documents containing the data for the 3 months ended 31 March 2026 – will be published before the start of trading on 14 May 2026" (accelerated from May 21)
+
+**Q3 2026 Results:**
+- "documents including the data for the 3- and 9-month periods ended 30 September 2026 – will be published before the start of trading on 12 November 2026" (accelerated from November 19)
+
+**Unchanged Dates:**
+- Annual report for 2025: March 12, 2026
+- Semi-annual report for 2026: September 17, 2026
+
+**Note:** The Luxembourg-based company will not publish full quarterly reports for Q1 and Q3 2026, nor separate reports for Q4 2025 and Q2 2026, consistent with Luxembourg company practice.

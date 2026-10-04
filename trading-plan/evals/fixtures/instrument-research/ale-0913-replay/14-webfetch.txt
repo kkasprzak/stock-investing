@@ -1,0 +1,6 @@
+url: https://strefabiznesu.pl/duza-transakcja-na-akcjach-allegro-fundusz-oferuje-okolo-131-mln-walorow/ar/c3p2-29093373
+prompt: Extract: which fund is selling approximately 131 million Allegro shares, on what date, at what price, and whether this represents their entire remaining stake.
+
+The server returned HTTP 403 Forbidden.
+
+The response body was not retrieved. If this URL requires authentication, use an authenticated tool (e.g. `gh` for GitHub, or an MCP-provided fetch tool) instead of WebFetch.

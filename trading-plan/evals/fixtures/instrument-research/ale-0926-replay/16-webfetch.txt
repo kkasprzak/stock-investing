@@ -1,0 +1,22 @@
+url: https://www.bankier.pl/wiadomosc/ALLEGRO-EU-S-A-Allegro-informuje-o-transakcjach-zwiazanych-z-programem-skupu-akcji-wlasnych-przeprowadzonych-w-dniach-9-11-wrzesnia-2026-r-9196667.html
+prompt: Extract: publication date, buyback program price cap per share, program size/window, executing broker, and confirmed fills - dates, number of shares, prices for the September 9-11 2026 transactions.
+
+# Allegro Share Buyback Report Summary
+
+**Publication Date:** September 14, 2026
+
+**Report Details:**
+The Board of Directors reported transactions conducted between September 9-11, 2026, related to Allegro.eu's share buyback program, as referenced in current report No. 26/2026 from June 25, 2026.
+
+**Executing Broker:** Erste Bank Polska S.A. - Erste Biuro Maklerskie
+
+**Transaction Information:**
+Specific transaction details including dates, share quantities, and prices are contained in the attached PDF document ("Attachment_1__transaction_details_09.09-11.09.2026.pdf"), which was prepared based on information received from the executing broker.
+
+**Program Basis:**
+The buyback program operates under "Art. 2 ust. 2 i 3 Rozporządzenia delegowanego Komisji (UE) 2016/1052" and Article 5(3) of the Market Abuse Regulation.
+
+**Company Information:**
+Allegro.eu S.A. is a Luxembourg public limited liability company (société anonyme) registered at 6, rue Eugène Ruppert, L-2453 Luxembourg, with registration number B214830.
+
+**Note:** The actual transaction fills (specific dates, quantities, and prices) are referenced as being in the attachment PDF, which was not accessible in the provided content.

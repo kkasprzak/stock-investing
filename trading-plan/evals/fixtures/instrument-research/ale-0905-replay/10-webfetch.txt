@@ -1,0 +1,29 @@
+url: https://www.marketscreener.com/quote/stock/ALLEGRO-EU-S-A-119083493/calendar/
+prompt: Find the next scheduled earnings/financial results announcement date for Allegro.eu (ALE), and any dividend-related dates listed.
+
+# Allegro.eu S.A. (ALE) - Upcoming Financial Events
+
+Based on the calendar data provided, here are the next scheduled events for Allegro.eu:
+
+## Immediate Upcoming Events
+
+**Q2 2026 Results:**
+- Earnings release: September 17, 2026 at 4:00 AM
+- Earnings presentation: September 17, 2026 at 4:00 AM
+
+**Information Meetings:**
+- September 21, 2026
+- September 22, 2026
+- September 30, 2026
+- October 1, 2026
+
+## Q3 2026 Results (Preliminary)
+
+- Sales and Revenue Release: November 11, 2026
+- Earnings release: November 12, 2026
+
+## Key Observations
+
+The company trades on the Warsaw Stock Exchange under ticker **ALE** (ISIN: LU2237380790). The calendar shows regular quarterly earnings releases and periodic information meetings scheduled throughout the fall of 2026.
+
+**Note:** No dividend dates are explicitly listed in the provided calendar data. For comprehensive dividend information, you would need to check the company's dividend calendar section separately.

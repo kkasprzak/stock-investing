@@ -1,0 +1,25 @@
+query: Allegro.eu current shareholders structure 2026 free float Cinven Permira Mid Europa residual stake
+
+Web search results for query: "Allegro.eu current shareholders structure 2026 free float Cinven Permira Mid Europa residual stake"
+
+Links: [{"title":"ANNUAL REPORT OF ALLEGRO.EU S.A. GROUP for the year ended 31 December 2025","url":"https://about.allegro.eu/wp-content/uploads/2026/03/ALLEGRO-Annual-Consolidated-Report-2025.pdf"},{"title":"STANDALONE ANNUAL REPORT OF ALLEGRO.EU SOCIÉTÉ ANONYME","url":"https://about.allegro.eu/static-files/c186b414-ad1c-4d71-a5d2-bff1c5b9e924"},{"title":"Shareholders - Allegro","url":"https://about.allegro.eu/investors/shareholders/"},{"title":"Allegro (website)","url":"https://en.wikipedia.org/wiki/Allegro_(website)"},{"title":"1 we simplify shopping and selling The Leading European Marketplace 2026","url":"https://about.allegro.eu/wp-content/uploads/2026/04/Allegro_Equity_Story_FY2025-Introduction-to-Allegro.pptx.pdf"},{"title":"Who Owns Allegro Company? – businessmodelcanvastemplate.com","url":"https://businessmodelcanvastemplate.com/blogs/owners/allegro-who-owns"},{"title":"Allegro | Cinven - Focused European Integrated World-class","url":"https://www.cinven.com/portfolio/allegro/"},{"title":"Who Owns Allegro Company? – PortersFiveForce.com","url":"https://portersfiveforce.com/blogs/owners/allegro"},{"title":"ALLEGRO EU S A 119083493","url":"https://uk.marketscreener.com/quote/stock/ALLEGRO-EU-S-A-119083493/"}]
+
+Based on the search results, here is the current shareholders structure for Allegro.eu as of 2026:
+
+## Shareholders Structure (as of July 2026)
+
+As of 21 July 2026, the shareholding structure shows:
+- Free Float: 853,826,264 shares (83.88%)
+- Treasury Shares: 3,372,055 shares (0.33%)
+- Other shareholders: 58,262,224 shares (5.72%)
+
+## Private Equity Holdings
+
+The principal shareholders include Cidinan S.à r.l. representing Cinven & Co-Investors, Permira VI Investment Platform S.à r.l. representing Permira & Co-Investors. Mid Europa Partners' holding vehicle (Mepinan S.à r.l.) was no longer a Significant Shareholder from 10 October 2023 following a share disposal that resulted in their stake falling below 5%.
+
+By 2026, the private equity holdings are under 25%, with institutional holders like BlackRock (~5.2%) and Capital Group (~4.8%) among the largest public holders, following large secondary offerings by Cinven and Permira in 2024-25.
+
+The significant reduction in PE ownership reflects the consortium's ongoing exit strategy following the October 2020 IPO on the Warsaw Stock Exchange.
+
+
+REMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.
