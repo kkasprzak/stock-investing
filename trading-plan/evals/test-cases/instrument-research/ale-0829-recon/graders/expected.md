@@ -8,9 +8,11 @@ You are judging one answer from the `instrument-research` skill. Judge **only it
 against the reference below.
 
 PASS only if that field satisfies every item under "Must state" and contradicts no item under
-"Must not state". Ignore everything under "Not required". Wording, order, formatting, a leading
-status token or its absence, and the facet's other fields may all differ. If a required claim cannot
-be settled from the answer alone, FAIL.
+"Must not state". Items under "Not decisive" are what a full answer would also give: their absence
+or imprecision never fails it. "Context" explains the inputs and is not something the answer has to
+say. Ignore everything under "Not required". Wording, order, formatting, a leading status token or
+its absence, and the facet's other fields may all differ. If a required claim cannot be settled from
+the answer alone, FAIL.
 
 # Expected `buyback:` — ale-0829-recon
 
