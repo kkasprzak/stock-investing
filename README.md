@@ -24,7 +24,7 @@ fourth remembers what you held:
 |---|---|
 | `stock-market-data` | Fetches delayed daily / weekly / monthly OHLC candles and Wilder ATR for named tickers (GPW / XETRA / US), resolved through a shared ISIN-keyed symbol map. The single place ATR is computed, so two callers never disagree on the same number. |
 | `instrument-analysis` | A purely technical read of one instrument from a candle snapshot: trend, momentum, key levels, condition, invalidation, an implied stop, and a 0-10 setup score. Emits a strict ten-line contract with closed vocabularies, so an orchestrator can parse it. |
-| `instrument-research` | Web-sourced company facts, one facet at a time: `events` (earnings, ex-dividend, buybacks, overhang, contested control), `fundamentals`, or `news`. Every date and number carries its source, or is marked `[UNVERIFIED]` — never inferred. |
+| `instrument-research` | Web-sourced company facts, one facet at a time: `events` (earnings, ex-dividend, buybacks, overhang, contested control), `fundamentals`, or `news`. Every date and number carries its source, or is marked `[UNVERIFIED]` — never inferred. A buyback's status names the company report it rests on, and is `[UNVERIFIED]` when a later event is known only from a search summary. |
 | `position-journal` | An append-only log of positions opened and closed, and three folds over it: what you hold, every episode of one name, and how many shares you held on a given date. A state file forgets a position the moment you delete its row — this is what answers *have we owned this before, and when did we leave it*. |
 
 **What they deliberately do not do:** place orders, connect to a broker, size a position, or tell
