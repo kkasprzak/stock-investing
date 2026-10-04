@@ -39,7 +39,7 @@ the buyback right from them? Three graders:
 
 The replay and recon cases were re-run on the final spec, and the judge passed 25/25.
 
-Two lessons from this run. First, reaching the source was never the problem: every run found the
-company's own report list. The problem was opening a report and getting past a PDF that WebFetch
+Two lessons from this run. First, reaching the source was never the problem: every run reached the
+company's own site, its report list or its PDF. The problem was opening a report and getting past a PDF that WebFetch
 cannot read. Second, a rule that turns any unread later event into `[UNVERIFIED]` was too broad. A
 proposal waiting for a vote does not change what is running.
