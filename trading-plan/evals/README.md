@@ -224,6 +224,16 @@ against the saved outputs of both arms, the structure pattern matches 0 of 30 an
 spec and 29 of 30 on the structured one; the one miss had dropped its `programme:` line. It is still
 a format check on an instrument without a programme.
 
+**The sub-keys, after 0.3.0.** Once the five replay and recon cases carried `buyback-structure`, it
+failed answers that were right in substance but wrote a note between key and colon
+(`later_events_unread (all from summaries):`). The grader stayed strict and the contract was
+tightened in 0.3.1: each key exactly as written, the colon right after it. On `claude-sonnet-5-5`
+that took the rate from 2 in 25 to 1 in 50, with ten runs per case and the judge at 50/50. The
+remaining 2% is known and accepted. One more failure in that run was of a different kind: the model
+indented the whole facet block, as `SKILL.md` shows it, so `^buyback:` did not match. The content
+was right, and nothing downstream cares about indentation. Expect it as an occasional false red,
+not as a defect.
+
 The judge erred in both directions along the way. On the third version it passed an answer that gave
 the status as confirmed. On the fourth it failed an answer that, asked to reason item by item, it
 passed twice. Both are long answers near the line, and the runner takes one word per vote. A single
