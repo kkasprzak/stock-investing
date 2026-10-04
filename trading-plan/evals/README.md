@@ -174,9 +174,17 @@ seeing its result proves nothing.
 **Before the fix** — 2026-10-04, at `4b831cb`, current spec, `claude-sonnet-5`, judge Sonnet 5.5,
 five runs each: `ale-0926-replay` 0/5 (0.40), every failure the 26 Sep error — a certain status
 resting on search summaries, the AGM authorisation read as the programme, Phase I's raised cap
-given as live; `ale-0829-recon` 0/5; controls `ale-0905-replay` 5/5, `ale-1003-replay` 5/5,
+given as live; `ale-0829-recon` 0/5; controls `ale-0905-replay` 5/5, `ale-1003-replay` 4/5 (re-measured at `da98400`, see below),
 `ale-0921-evening-recon` 4/5 (one run called a completed programme "active"); `events-shape` 0/5,
 by construction.
+
+`ale-1003-replay`'s reference was corrected after this line was first written and before any
+result on the new spec existed: it had required a conclusion resting on a search-engine summary,
+which the fix declares is not a source, so the control would have failed for obeying the fix. It
+was re-measured on the current spec at `da98400`: 4/5 (0.88). The one failure is the judge's, not
+the model's — asked to explain itself, the judge opens with FAIL and then concludes the answer is
+correct; the runner asks for one word, so the second thought is lost. The same reference grades
+both arms.
 
 ## Further reading
 
