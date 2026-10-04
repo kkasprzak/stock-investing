@@ -1,4 +1,4 @@
-# Evals — instrument-analysis
+# Evals
 
 These measure the **model's output**, not the code. The unit tests under
 `skills/stock-market-data/tests` check that a function computes what it claims; here we check
@@ -57,24 +57,25 @@ the score; watch `PASS%` so a tolerance does not hide a trend.
 ## Layout
 
 ```
-fixtures/                        input — candle snapshots, one file per instrument
-test-cases/<case>/case.yaml      the case: scaffold_script + prompt
-test-cases/<case>/scaffold.sh    stages the fixture into the sandbox
-test-cases/<case>/graders/       graders, one file per assertion
+fixtures/<skill>/                     input, one directory per skill under test
+test-cases/<skill>/<case>/case.yaml   the case: scaffold_script + prompt
+test-cases/<skill>/<case>/scaffold.sh stages the fixture into the sandbox
+test-cases/<skill>/<case>/graders/    graders, one file per assertion
 scripts/                         extract_outputs.py
 output/runs/                     recovered raw outputs + index.tsv
 output/results/                  runner artifacts (pass --output-dir)
 ```
 
 Modelled on `skills/stock-market-data/tests/fixtures` — the same split between the input data
-and the thing that checks it. One directory per case, all of them under `test-cases/`; the
-runner discovers them recursively (`<eval dir>/**/case.yaml`), so the nesting costs nothing.
+and the thing that checks it. Both trees are split by skill, one directory per case; the runner
+discovers cases recursively (`<eval dir>/**/case.yaml`), so the nesting costs nothing, and
+`make case CASE=<name>` still filters by the case's name, not its path.
 
 Two constraints the runner imposes, both learned the hard way:
 
 - `scaffold_script` names a path **inside the case directory** — `../scripts/stage.sh` is
   rejected as escaping it, and the value is a path, not inline shell. Hence a `scaffold.sh`
-  per case, each anchoring on its own location to reach `../../fixtures/`.
+  per case, each anchoring on its own location to reach `../../../fixtures/<skill>/`.
 - Unknown top-level keys in `case.yaml` are **silently ignored**. A misplaced key looks like
   working configuration and does nothing — `scaffold_script` belongs under `context:`, not at
   the top level and not under `execution:`.
@@ -116,7 +117,7 @@ independently and a divergence from the caller's own level stays meaningful.
 ## Refreshing fixtures
 
 When the snapshot shape changes, re-capture from the same source and swap the files into
-`fixtures/` unedited. Never hand-assemble one — a hand-made fixture measures an idea of the
+`fixtures/instrument-analysis/` unedited. Never hand-assemble one — a hand-made fixture measures an idea of the
 input rather than the input.
 
 ## What these graders do not check
