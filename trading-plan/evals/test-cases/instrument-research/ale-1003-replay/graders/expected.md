@@ -22,14 +22,26 @@ those files is never required.
 
 ## Must state
 
-- The current programme is Phase II, with a price cap of **PLN 50** per share.
-- Phase I has ended; it is not the current programme.
-- PLN 65 is a **proposal** for a general meeting on 18 November 2026, not the cap in force.
+- Whatever it says about the programmes is consistent with this picture: Phase II is the current
+  programme, with a price cap of **PLN 50** per share, and Phase I has ended. Three answers are
+  equally correct: this picture stated as confirmed; the same picture marked unconfirmed
+  (`[UNVERIFIED]`) because its only source is a search-engine summary; or a status of
+  `[UNVERIFIED]` with no programme detail, because no company report is among the inputs.
+- If PLN 65 is mentioned, it is a **proposal** for a general meeting on 18 November 2026, not the
+  cap in force.
 
 ## Must not state
 
 - PLN 65 as the price cap in force.
 - Phase I, or its raised PLN 50 cap, as the running programme.
+- Any other cap for Phase II, or any other programme as the current one.
+
+## Context
+
+- Everything the inputs say about the buyback — Phase II's terms, Phase I's end, the PLN 65
+  proposal — comes from one search-engine summary (file `03`); no company current report is among
+  them. Under a spec that accepts such summaries the picture can be stated as confirmed; under one
+  that does not, it cannot. Both readings pass; only a wrong picture fails.
 
 ## Not decisive
 
