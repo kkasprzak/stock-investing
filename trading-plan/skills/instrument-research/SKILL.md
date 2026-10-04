@@ -29,7 +29,9 @@ Return only the requested facet's block.
     ex_dividend:     # DPS + the ladder as published — last session with rights, ex-date, record
                      #   date, payment date — each sourced. [UNVERIFIED], or [N/A] + why
     buyback:         # the company's own reports decide this field; a search summary or an
-                     #   article *about* a report is not one.
+                     #   article *about* a report is not one. All five lines, always, each
+                     #   key exactly as written with its colon right after it — any
+                     #   qualifier goes after the colon.
       latest_report_read:   # newest company report on the programme you actually read —
                             #   number, date, what it covers. Or `none`
       later_events_unread:  # events dated after it, known only from a summary — date + what.

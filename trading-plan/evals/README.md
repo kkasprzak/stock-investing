@@ -64,9 +64,12 @@ unless the case sets `execution.model`. Read a trace's `model` fields before tru
 about it. Two earlier commits got this wrong: `d9719d6` put a behaviour change between two runs
 down to the `sonnet` alias moving, and `24675c5` said its trace confirmed the evals ran on the
 pinned Sonnet. Both runs were in fact executed by the default model; the change more likely came
-from that default moving (Opus 5 → 5.5) than from the alias. A case that must reproduce a specific
-run — every `instrument-research` replay — therefore pins `execution.model` to the model that run
-used.
+from that default moving (Opus 5 → 5.5) than from the alias. While the buyback fix was
+being measured, every `instrument-research` case pinned `execution.model` to the model the failing
+runs used, `claude-sonnet-5`, so the error could reproduce. With the comparison closed the cases
+follow the skill instead: `execution.model` is the model `SKILL.md` pins, `claude-sonnet-5-5`, so a
+run measures what production runs. The two move together — change the pin, change this line in
+every case. Checked before the switch: the replay and recon cases scored 25/25 on both models.
 
 **The judge.** `type: llm` graders are decided by a separate model, three votes, majority wins.
 The runner's default judge is Haiku; the Makefile sets `JUDGE_MODEL=claude-sonnet-5-5` instead,
@@ -220,6 +223,16 @@ and `buyback-structure` requires the five lines in order before `share_overhang:
 against the saved outputs of both arms, the structure pattern matches 0 of 30 answers on the prose
 spec and 29 of 30 on the structured one; the one miss had dropped its `programme:` line. It is still
 a format check on an instrument without a programme.
+
+**The sub-keys, after 0.3.0.** Once the five replay and recon cases carried `buyback-structure`, it
+failed answers that were right in substance but wrote a note between key and colon
+(`later_events_unread (all from summaries):`). The grader stayed strict and the contract was
+tightened in 0.3.1: each key exactly as written, the colon right after it. On `claude-sonnet-5-5`
+that took the rate from 2 in 25 to 1 in 50, with ten runs per case and the judge at 50/50. The
+remaining 2% is known and accepted. One more failure in that run was of a different kind: the model
+indented the whole facet block, as `SKILL.md` shows it, so `^buyback:` did not match. The content
+was right, and nothing downstream cares about indentation. Expect it as an occasional false red,
+not as a defect.
 
 The judge erred in both directions along the way. On the third version it passed an answer that gave
 the status as confirmed. On the fourth it failed an answer that, asked to reason item by item, it

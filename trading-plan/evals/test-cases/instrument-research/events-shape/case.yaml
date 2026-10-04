@@ -2,7 +2,7 @@ schema_version: "1.0"
 name: events-shape
 runs: 5
 execution:
-  model: claude-sonnet-5
+  model: claude-sonnet-5-5
   max_turns: 10
   timeout_seconds: 600
   allowed_tools: [Skill]
