@@ -28,3 +28,18 @@ the buyback right from them? Three graders:
   report list. A search summary that only mentions one does not count.
 - `buyback-structure`: the field's five lines, in order.
 - `expected.md` (judge): the buyback as the newest reports state it.
+
+### Results, 2026-10-04 (3 runs each, `claude-sonnet-5-5`)
+
+| spec | judge | what the runs did |
+|---|---|---|
+| 0.3.1 | 0/3 | opened the company's report list or its Phase II PDF; read no report; `[UNVERIFIED]` |
+| + open the report; PDF → exchange feed | 1/3 | two runs read the reports; one of those still answered `[UNVERIFIED]` because of an unread board *proposal* |
+| + only state-changing events count | **3/3** | the PDF failed every time, so each run read report 51/2026 as ESPI text and answered `running`, cap PLN 50 |
+
+The replay and recon cases were re-run on the final spec, and the judge passed 25/25.
+
+Two lessons from this run. First, reaching the source was never the problem: every run found the
+company's own report list. The problem was opening a report and getting past a PDF that WebFetch
+cannot read. Second, a rule that turns any unread later event into `[UNVERIFIED]` was too broad. A
+proposal waiting for a vote does not change what is running.
