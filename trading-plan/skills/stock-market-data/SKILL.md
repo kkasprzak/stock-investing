@@ -14,13 +14,15 @@ depend on the output contract, not on which source answered.
 ## Run
 
 ```
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL ALE.PL PKO.PL ETFBM40TR.PL   # broker tickers, daily
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --interval w                 # weekly (W1); m = monthly
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --bars 10                    # more history per symbol
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --cache                      # reuse today's closed candles (skip the fetch)
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --atr                        # + Wilder ATR(14) on that interval (--atr 20 to override)
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --swings                     # + confirmed swing lows (2 sessions each side; --swings 3 to override)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL ALE.PL PKO.PL ETFBM40TR.PL   # broker tickers, daily
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --interval w                 # weekly (W1); m = monthly
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --bars 10                    # more history per symbol
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --cache                      # reuse today's closed candles (skip the fetch)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --atr                        # + Wilder ATR(14) on that interval (--atr 20 to override)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --swings                     # + confirmed swing lows (2 sessions each side; --swings 3 to override)
 ```
+
+Always pass `--store` exactly as above: it points at this project's own candle store (next section).
 
 Input is **broker tickers** (`.PL` / `.DE` / `.US`) — the same symbols the state files use — or an
 **ISIN** (resolved via the same map; handy for index-membership callers). You never pass
@@ -34,6 +36,39 @@ from the context, not a fixed rule. Default is always-live. An entry is scoped t
 was written in: **crossing that venue's close invalidates it**, so a series cached mid-session is
 never served afterwards as the day's closed candle. Within an open session a cached forming bar can
 still be stale by construction — that bar is `complete:false`, so never decide on it.
+
+## Own candle store (required per project)
+
+The store is this project's own record of closed daily candles, one CSV file per ISIN, filled only
+by import and asked before Yahoo, which only fills what the store lacks
+([ADR 0000](https://github.com/kkasprzak/stock-investing/blob/main/docs/adr/0000-own-candle-store-is-the-most-trusted-source-of-market-data.md),
+[ADR 0001](https://github.com/kkasprzak/stock-investing/blob/main/docs/adr/0001-candle-store-is-one-csv-file-per-isin-versioned-in-the-consumers-repository.md)).
+
+- **Every project that uses this skill has its own store**, under `data/market-data/` in that
+  project's repository. There is no global store. The `Run` lines point at it.
+- `unavailable: [{source: "store", reason: "not_found"}]` on every record means this project has no
+  store yet: do the first import (below). Until then the bars come from Yahoo alone.
+- **Feeding it** — one export per instrument, keyed the same way as `quotes.py`:
+
+  ```
+  python3 ${CLAUDE_SKILL_DIR}/scripts/import_quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data stooq <export.csv> --for PEO.PL
+  ```
+
+  The export is Stooq's **daily** history with "pomijaj splity + dywidendy" (skip splits and
+  dividends), taken **after the session has closed**: the import contract is complete data of closed
+  sessions only, and the importer does not know the exchange calendar, so it cannot rescue an export
+  taken mid-session. History from 2022 is enough (Stooq's older history has fractional volume and the
+  whole file is rejected). A row dated today never enters the store; it is skipped and counted.
+- The importer prints a JSON report: `{isin, key, file, added, unchanged, changed, changed_dates[],
+  skipped_today, imported: {first, last}}`. `changed` > 0 means sessions already in the store now
+  read differently: check `changed_dates` and the `git diff` before keeping them. Importing the same
+  export again gives `added 0, changed 0` and an unchanged file. Exit 1: the file was rejected
+  (`line N: why` on stderr) and the store was not touched. Exit 2: unknown ticker or bad arguments.
+- **Committing the store is the user's step**; the importer never runs git. The project's
+  `.gitattributes` should carry `data/market-data/*.csv text eol=lf`.
+- Consequences: with a store, a Yahoo outage still gives `ok:true` on the store's bars, and the
+  outage shows in `unavailable`. Yahoo is split-adjusted and the "skip splits" export is not, so a
+  split after the last import breaks continuity between store and Yahoo bars until the next import.
 
 ## Output contract
 
@@ -73,7 +108,8 @@ there, else the first one's. A source that answered with nothing is not a failur
   retest is not one, and `higher_than_previous_row_low` is `null` on the first row (no predecessor),
   never `false`. **Every** confirmed low is reported, lower ones included — which one a stop may
   anchor to is the caller's rule, not this layer's. No pivot in the window → `detected: []`.
-- Data is **delayed (~15 min)** — recent, not real-time.
+- Bars with `source: "yahoo"` are **delayed (~15 min)** — recent, not real-time. Bars with
+  `source: "store"` are closed sessions as of the last import.
 - A price it can't read is `[NO DATA]`, never inferred. One bad ticker never fails the others.
 
 ## Gotchas
