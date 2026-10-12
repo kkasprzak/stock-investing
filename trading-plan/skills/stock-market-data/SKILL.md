@@ -57,9 +57,11 @@ by import and asked before Yahoo, which only fills what the store lacks
   The export is Stooq's **daily** history with "pomijaj splity + dywidendy" (skip splits and
   dividends), taken **after the session has closed**: the import contract is complete data of closed
   sessions only, and the importer does not know the exchange calendar, so it cannot rescue an export
-  taken mid-session. History from 2022 is enough (Stooq's older history has fractional volume and the
-  whole file is rejected). A row dated today is imported: Stooq's daily export lists closed
-  sessions only. A row dated after today rejects the whole file.
+  taken mid-session. History from 2022 is enough. The export's prices and volume carry noise of about
+  1e-5 of each value, which the importer takes off; a value further off rejects the whole file
+  (Stooq's history before ~2022 has more noise: export a shorter range). A row dated today is
+  imported: Stooq's daily export lists closed sessions only. A row dated after today rejects the
+  whole file.
 - The importer prints a JSON report: `{isin, key, file, added, unchanged, changed, changed_dates[],
   imported: {first, last}}`. `changed` > 0 means sessions already in the store now
   read differently: check `changed_dates` and the `git diff` before keeping them. When `added` and

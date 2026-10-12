@@ -19,11 +19,13 @@ from pathlib import Path
 
 from support import FX
 import import_quotes
+from market_data import store_file
+from market_data.adapters.store import StoreQuotes
 from market_data.importers import stooq
 from market_data.importers.stooq import StooqFormatError
 from market_data.indicators import atr_wilder
-from market_data.model import DailyQuote, Price, Volume
-from market_data.store_file import StoredQuote, to_bar
+from market_data.model import DailyQuote, DateRange, Instrument, Isin, Price, Volume
+from market_data.store_file import StoredQuote
 
 ALE_ATR = 1.2752            # regression pin: Wilder ATR(14) of stooq_ale_d_raw.csv as of 2026-10-09
 PL_HEADER = "Data,Otwarcie,Najwyzszy,Najnizszy,Zamkniecie,Wolumen\n"
@@ -44,7 +46,8 @@ class TempDir(unittest.TestCase):
 
 
 class TestSnap(unittest.TestCase):
-    """Stooq's dividend de-adjustment leaves float noise in the last places; snap takes it off."""
+    """Stooq's dividend de-adjustment leaves float noise in the last places; snap takes it off.
+    The noise is relative (about 1e-5 of the value), so the radius is too."""
 
     def test_noise_snaps_to_the_shortest_value_within_the_radius(self):
         self.assertEqual(stooq.snap("237.0994785"), "237.1")
@@ -53,13 +56,19 @@ class TestSnap(unittest.TestCase):
         self.assertEqual(stooq.snap("19.77"), "19.77")
         self.assertEqual(stooq.snap("1234.51"), "1234.51")
 
-    def test_radius_is_capped_at_a_tenth_of_a_grosz(self):
-        # 1e-5 x 1234 would be 0.0123 and let 1234.5 through; the 0.001 cap keeps the grosz.
-        self.assertEqual(stooq.snap("1234.5100003"), "1234.51")
+    def test_radius_grows_with_the_value(self):
+        # LPP 2022-01-03 open, 0.136 off: noise on a five-digit price, inside 1e-5 x 17250 = 0.17.
+        self.assertEqual(stooq.snap("17250.135879362"), "17250")
+        # No cap: 1e-5 x 1234 = 0.0123 covers the grosz, so the shorter 1234.5 wins.
+        self.assertEqual(stooq.snap("1234.5100003"), "1234.5")
 
-    def test_nothing_within_the_radius_falls_back_to_four_places(self):
-        self.assertEqual(stooq.snap("0.123456"), "0.1235")
+    def test_nothing_within_the_radius_is_rejected_not_cut(self):
         self.assertIsNone(stooq.shortest_within_radius(Decimal("0.123456")))
+        with self.assertRaises(ValueError) as cm:
+            stooq.snap("0.123456")
+        self.assertIn("0.123456", str(cm.exception))
+        self.assertIn('"pomijaj splity + dywidendy"', str(cm.exception))
+        self.assertIn("shorter range", str(cm.exception))
 
     def test_four_places_are_never_touched(self):
         self.assertEqual(stooq.snap("12.3400"), "12.3400")
@@ -68,6 +77,33 @@ class TestSnap(unittest.TestCase):
         for text in ("19", "-1.123456", "1e2", "nan", " 1.5", ""):
             with self.subTest(text=text):
                 self.assertEqual(stooq.snap(text), text)
+
+
+class TestSnapVolume(unittest.TestCase):
+    """De-adjustment puts the same relative noise on volume: a fraction within 1e-5 of a whole
+    number is that number; further off, the file is rejected."""
+
+    def test_a_whole_number_stays_as_it_is(self):
+        self.assertEqual(stooq.snap_volume("2559"), "2559")
+        self.assertEqual(stooq.snap_volume("0"), "0")
+
+    def test_noise_snaps_to_the_nearest_whole_number(self):
+        # LPP 2022-01-03: 0.0073 off, inside 1e-5 x 2559 = 0.026.
+        self.assertEqual(stooq.snap_volume("2558.9926927366"), "2559")
+
+    def test_a_fraction_outside_the_radius_is_rejected_with_the_value(self):
+        for text in ("469.68936359651",       # PEO 2004-12-24: 6.6e-4 off
+                     "1.6740976690835"):      # LPP 2002-07-12: 0.19 off
+            with self.subTest(text=text), self.assertRaises(ValueError) as cm:
+                stooq.snap_volume(text)
+            self.assertIn(text, str(cm.exception))
+            self.assertIn('"pomijaj splity + dywidendy"', str(cm.exception))
+            self.assertIn("shorter range", str(cm.exception))
+
+    def test_what_is_not_a_plain_number_is_rejected(self):
+        for text in ("-1", "1e2", "", " 5"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                stooq.snap_volume(text)
 
 
 class TestParseRejects(TempDir):
@@ -101,9 +137,28 @@ class TestParseRejects(TempDir):
     def test_date_not_iso(self):
         self.assertRejected(self.export(PL_HEADER + "20260703,1,1,1,1,1\n"), 2, "date")
 
-    def test_fractional_volume_names_the_old_history(self):
-        # Stooq's history before 2022 carries de-adjusted, fractional volume.
-        self.assertRejected(Path(FX) / "stooq_kgh_m.csv", 2, "2022")
+    def assertNoiseRejected(self, row, value):
+        path = self.export(PL_HEADER + row + "\n")
+        self.assertRejected(path, 2, value)
+        with self.assertRaises(StooqFormatError) as cm:
+            stooq.parse(path)
+        hint, history = (cm.exception.why.find('"pomijaj splity + dywidendy"'),
+                         cm.exception.why.find("before ~2022"))
+        self.assertTrue(0 <= hint < history, cm.exception.why)    # the export option comes first
+
+    # Real rows from Karol's full-history exports (~/Downloads/{peo,lpp}_d.csv, not committed).
+
+    def test_full_history_peo_volume_is_rejected(self):
+        self.assertNoiseRejected("2004-12-24,133.99790082288,136.00011867238,133.99790082288,"
+                                 "136.00011867238,469.68936359651", "469.68936359651")
+
+    def test_full_history_lpp_volume_is_rejected(self):
+        self.assertNoiseRejected("2002-07-12,107.99940756323,107.99940756323,107.99940756323,"
+                                 "107.99940756323,1.6740976690835", "1.6740976690835")
+
+    def test_a_price_outside_the_radius_is_rejected(self):
+        # Made up: no real export has one yet. Cut to four places, it would be stored as a price.
+        self.assertNoiseRejected("2026-07-06,0.123456,1,0.1,1,1", "0.123456")
 
     def test_negative_volume(self):
         self.assertRejected(self.export(PL_HEADER + "2026-07-03,1,1,1,1,-1\n"), 2, "volume")
@@ -171,23 +226,54 @@ class TestParse(TempDir):
         self.assertIn("low", cm.exception.why)
 
 
-class TestRealExports(unittest.TestCase):
-    """Karol's own exports ("skip splits + dividends"): the noise guard and the ATR pins."""
+class TestRealExports(TempDir):
+    """Karol's own exports ("skip splits + dividends"): the noise guards and the ATR pins."""
 
     PEO = Path(FX) / "stooq_peo_d_raw.csv"
     ALE = Path(FX) / "stooq_ale_d_raw.csv"
+    LPP = Path(FX) / "stooq_lpp_d_raw.csv"
 
-    def price_texts(self, path):
+    def columns(self, path):
         with open(path, encoding="utf-8", newline="") as f:
-            return [p for row in list(csv.reader(f))[1:] for p in row[1:5]]
+            rows = list(csv.reader(f))[1:]
+        return [p for row in rows for p in row[1:5]], [row[5] for row in rows]
 
     def test_every_noisy_peo_price_is_within_the_snap_radius(self):
-        # The full 1998-2026 history peaked at 0.000999 off: zero slack. If a re-export ever
-        # carries a value the radius does not cover, this names it before the store takes it.
-        long = [t for t in self.price_texts(self.PEO) if len(t.partition(".")[2]) > 4]
+        # Peaks at 0.97e-5 off (the full 1998-2026 history at 0.99993e-5): little slack. If a
+        # re-export ever carries a value the radius does not cover, this names it.
+        prices, _ = self.columns(self.PEO)
+        long = [t for t in prices if len(t.partition(".")[2]) > 4]
         self.assertGreater(len(long), 1000)
         outside = [t for t in long if stooq.shortest_within_radius(Decimal(t)) is None]
         self.assertEqual(outside, [])
+
+    def test_every_noisy_lpp_value_is_within_the_snap_radius(self):
+        # Five-digit prices: 0.136 off on 17250 is noise. Prices peak at 0.998e-5 off, volume at
+        # 0.95e-5. Under the old 0.001 cap the prices kept three places of noise.
+        prices, volumes = self.columns(self.LPP)
+        long = [t for t in prices if len(t.partition(".")[2]) > 4]
+        self.assertGreater(len(long), 4000)
+        self.assertEqual([t for t in long if stooq.shortest_within_radius(Decimal(t)) is None], [])
+        fractional = [t for t in volumes if "." in t]
+        self.assertGreater(len(fractional), 1000)
+        rejected = []
+        for t in fractional:
+            try:
+                stooq.snap_volume(t)
+            except ValueError:
+                rejected.append(t)
+        self.assertEqual(rejected, [])
+
+    def test_lpp_parses_whole_to_the_price_grid(self):
+        rows = stooq.parse(self.LPP)
+        self.assertEqual((len(rows), rows[0].quote.session, rows[-1].quote.session),
+                         (1196, date(2022, 1, 3), date(2026, 10, 12)))
+        q = rows[0].quote   # 17250.135879362,17430.100107203,16360.045783182,16789.893585063,2558.99...
+        self.assertEqual([str(p) for p in (q.open, q.high, q.low, q.close, q.volume)],
+                         ["17250", "17430", "16360", "16790", "2559"])
+        places = {len(str(p).partition(".")[2])
+                  for r in rows for p in (r.quote.open, r.quote.high, r.quote.low, r.quote.close)}
+        self.assertEqual(places, {0, 1})
 
     def test_peo_parses_whole(self):
         rows = stooq.parse(self.PEO)
@@ -203,22 +289,27 @@ class TestRealExports(unittest.TestCase):
         self.assertEqual([str(p) for p in (q.open, q.high, q.low, q.close)],
                          ["265", "265.5", "258.6", "261.1"])
 
-    def atr(self, path):
-        bars = [to_bar(r) for r in stooq.parse(path) if r.quote.session <= date(2026, 10, 9)]
-        return atr_wilder(bars)
+    def atr(self, path, isin):
+        """The way the CLI gets there: the import writes the store file, StoreQuotes reads it."""
+        store_file.write(self.tmp / f"{isin}.csv", stooq.parse(path))
+        instrument = Instrument(key=isin, isin=Isin.parse(isin), symbols={})
+        series = StoreQuotes(self.tmp).daily(
+            instrument, DateRange(date(2026, 1, 1), date(2026, 10, 9)), now=0.0)
+        return atr_wilder(list(series.bars))
 
     def test_peo_atr_pin(self):
         # Computed 2026-10-10 on the series with Stooq's candles swapped in (ADR 0000: the 110
         # honest sessions agree with Yahoo to the grosz, so a Stooq-only series gives the same).
         # That value was taken to the grosz; the four places are a regression pin from this fixture.
-        rec = self.atr(self.PEO)
+        rec = self.atr(self.PEO, "PLPEKAO00016")
         self.assertEqual((rec["as_of"], round(rec["value"], 2)), ("2026-10-09", 7.52))
-        self.assertEqual(rec["value"], 7.5209)
+        self.assertAlmostEqual(rec["value"], 7.5209, places=4)
 
     def test_ale_atr_pin(self):
         # Regression pin, computed when this test was written (2026-10-12) from this fixture.
-        rec = self.atr(self.ALE)
-        self.assertEqual((rec["as_of"], rec["value"]), ("2026-10-09", ALE_ATR))
+        rec = self.atr(self.ALE, "LU2237380790")
+        self.assertEqual(rec["as_of"], "2026-10-09")
+        self.assertAlmostEqual(rec["value"], ALE_ATR, places=4)
 
 
 def run(argv, today=None):

@@ -39,11 +39,15 @@ fixtures/               see below
 yahoo_{PKN,KGH,LPP}.json        captured Yahoo chart responses (trimmed ~7 months)
 stooq_{pkn,kgh,lpp}_{d,w,m}.csv Stooq's default export (dividend-adjusted), last ~16 rows: the hand-verified
                                 golden OHLC for the Stooq oracle, and the importer's format cases
-                                (stooq_pkn_d.csv parses; stooq_kgh_m.csv has fractional volume, stooq_lpp_m.csv
-                                a weekend session: both rejected). Good for the format, not for the store's truth.
+                                (stooq_pkn_d.csv parses; stooq_lpp_m.csv has a weekend session: rejected).
+                                Good for the format, not for the store's truth.
 stooq_peo_d_raw.csv             Karol's export with "skip splits + dividends", PEO 2022-01-03..2026-10-09, 1195
-                                sessions (cut from the full history since 1998, which has fractional volume);
-                                the snap-radius guard and the ATR pin 7.52
+                                sessions (cut from the full history since 1998, whose volume noise is beyond
+                                the snap radius); the snap-radius guard and the ATR pin 7.52
+stooq_lpp_d_raw.csv             same kind of export, LPP 2022-01-03..2026-10-12, 1196 sessions, CRLF, rows byte
+                                for byte (cut from the full history since 2001, rejected the same way): five-
+                                digit prices with noise in the tenths (17250.135879362) and fractional volume,
+                                all within the relative radius; the guard that both snap and land on 0-1 places
 stooq_ale_d_raw.csv             same kind of export, ALE 2026-05-04..2026-10-09, 114 sessions; ATR regression pin
 stooq_peo_w_raw.csv             same kind of export, weekly (41 weeks dated on Sundays): must be rejected
 store/PLPKN0000018.csv          hand-written, in the store's own schema (LF): 2026-10-02 and 10-05..10-09, round numbers
@@ -116,10 +120,14 @@ values; the tests re-assert them on every run.
   answer for an ISIN without a file (still resolved) and for an unmapped instrument; `not_found`
   when the directory is missing, `malformed` (plus `path:line` on stderr) for a broken file; in a
   chain the store wins a shared date.
-- **Importer** (`test_import_stooq.py`) — snap examples; `parse` on both headers and line endings
-  and every rejection; on the real exports, a guard that every noisy PEO price sits within the snap
-  radius, and ATR pins (PEO 7.52 agrees with the 2026-10-10 hand computation; ALE is a regression
-  pin). `main()` on a temp store: the first import creates the store, the same export twice changes
+- **Importer** (`test_import_stooq.py`) — snap examples for prices and volume (the radius is 1e-5
+  of the value, no cap; a value outside it is rejected, never cut); `parse` on both headers and line
+  endings and every rejection, including real full-history rows (PEO, LPP) whose volume noise is
+  beyond the radius, inline because the full files are not committed; on the real exports, guards
+  that every noisy PEO price and every noisy LPP price and volume sits within the radius, and ATR
+  pins taken the way the CLI gets them (parse, the store file written to a temp directory, read back
+  through `StoreQuotes`): PEO 7.52 agrees with the 2026-10-10 hand computation; ALE is a regression
+  pin. `main()` on a temp store: the first import creates the store, the same export twice changes
   nothing (same bytes), a changed close is reported with its date, today's row is imported, a
   header-only export writes nothing. Exit 1, store untouched: a session after today, a bad row (the stored file stays byte for
   byte), a broken store file (not overwritten), a missing export. Exit 2: a missing `--store`, an

@@ -1,8 +1,10 @@
 """A Stooq daily CSV export read into store rows.
 
 Stooq exports come with a Polish or an English header, CRLF or LF line endings. Exported with
-"skip splits + dividends", prices from the dividend de-adjustment carry float noise in the last
-places (237.0994785 for 237.1); snap() takes it off before the prices are validated.
+"skip splits + dividends", prices and volume from the dividend de-adjustment carry float noise of
+about 1e-5 of the value (237.0994785 for 237.1, 17250.135879362 for 17250, volume 2558.99269 for
+2559); snap() and snap_volume() take it off before the row is validated. A value further off than
+that is not noise around a short one, and rejects the file rather than being cut.
 """
 from __future__ import annotations
 
@@ -21,9 +23,10 @@ HEADERS = (
     ("Data", "Otwarcie", "Najwyzszy", "Najnizszy", "Zamkniecie", "Wolumen"),
     ("Date", "Open", "High", "Low", "Close", "Volume"),
 )
-SNAP_MAX_PLACES = 4                     # a value with this many places or fewer is taken as written
-SNAP_RADIUS_CAP = Decimal("0.001")      # a tenth of a grosz: noise never moves a price by more
-SNAP_RADIUS_REL = Decimal("1e-5")       # ...nor by more than this fraction of it
+SNAP_MAX_PLACES = 4                     # a price with this many places or fewer is taken as written
+SNAP_RADIUS_REL = Decimal("1e-5")       # noise never moves a value by more than this fraction of it
+NOISE_HINT = ('export with "pomijaj splity + dywidendy" (skip splits and dividends); Stooq history '
+              'before ~2022 carries larger de-adjustment noise: export a shorter range')
 
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _LONG_DECIMAL = re.compile(r"\d+\.\d{%d,}" % (SNAP_MAX_PLACES + 1))
@@ -40,12 +43,12 @@ class StooqFormatError(Exception):
         self.why = why
 
 
-def shortest_within_radius(x: Decimal) -> Decimal | None:
-    """The value with the fewest places (0..4) within min(0.001, 1e-5 * x) of `x`, or None when
-    there is none. The radius is what de-adjustment noise is allowed to be; outside it a long value
-    is not noise around a short one."""
-    radius = min(SNAP_RADIUS_CAP, SNAP_RADIUS_REL * x)
-    for places in range(SNAP_MAX_PLACES + 1):
+def shortest_within_radius(x: Decimal, max_places: int = SNAP_MAX_PLACES) -> Decimal | None:
+    """The value with the fewest places (0..max_places) within 1e-5 * x of `x`, or None when there
+    is none. The radius is what de-adjustment noise is allowed to be; outside it a long value is
+    not noise around a short one."""
+    radius = SNAP_RADIUS_REL * x
+    for places in range(max_places + 1):
         y = x.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
         if abs(x - y) <= radius:
             return y
@@ -54,23 +57,29 @@ def shortest_within_radius(x: Decimal) -> Decimal | None:
 
 def snap(text: str) -> str:
     """A price as Stooq wrote it, without the de-adjustment noise. Only plain decimals longer than
-    four places are touched; anything else passes through for Price.parse to judge."""
+    four places are touched; anything else passes through for Price.parse to judge. ValueError
+    when no value of four places or fewer is within the radius."""
     if not _LONG_DECIMAL.fullmatch(text):
         return text
-    x = Decimal(text)
-    y = shortest_within_radius(x)
+    y = shortest_within_radius(Decimal(text))
     if y is None:
-        y = x.quantize(Decimal(1).scaleb(-SNAP_MAX_PLACES), rounding=ROUND_HALF_UP)
+        raise ValueError(f"price {text} is off every number of {SNAP_MAX_PLACES} places or fewer "
+                         f"by more than 1e-5 of it: {NOISE_HINT}")
     return format(y, "f")
 
 
-def _check_volume(text: str) -> None:
+def snap_volume(text: str) -> str:
+    """A volume as Stooq wrote it, without the de-adjustment noise: a whole number as written, a
+    fraction within the radius as the nearest whole number. ValueError otherwise."""
     if _INTEGER.fullmatch(text):
-        return
-    if _FRACTION.fullmatch(text):
-        raise ValueError(f"fractional volume {text}: Stooq's history before 2022 carries "
-                         f"de-adjusted volume; export from 2022 on")
-    raise ValueError(f"volume {text!r} is not a whole number of shares")
+        return text
+    if not _FRACTION.fullmatch(text):
+        raise ValueError(f"volume {text!r} is not a whole number of shares")
+    y = shortest_within_radius(Decimal(text), max_places=0)
+    if y is None:
+        raise ValueError(f"volume {text} is off the nearest whole number by more than 1e-5 of it: "
+                         f"{NOISE_HINT}")
+    return format(y, "f")
 
 
 def _decode(raw: bytes) -> str:
@@ -81,8 +90,8 @@ def _decode(raw: bytes) -> str:
 
 
 def _records(path: Path):
-    """(line, session, [open, high, low, close] snapped, volume text) per data row, after every
-    check that needs no price type: header, columns, ISO date, weekend, order, whole volume."""
+    """(line, session, [open, high, low, close] snapped, volume snapped) per data row, after every
+    check that needs no price type: header, columns, ISO date, weekend, order, noise radius."""
     rows = csv.reader(io.StringIO(_decode(Path(path).read_bytes()), newline=""))
     header = next(rows, None)
     if header is None or tuple(header) not in HEADERS:
@@ -107,11 +116,11 @@ def _records(path: Path):
                                          f"{'repeats' if session == previous else 'comes after'} "
                                          f"{previous}; dates must rise")
         try:
-            _check_volume(volume)
+            snapped = [snap(p) for p in prices], snap_volume(volume)
         except ValueError as e:
             raise StooqFormatError(line, str(e)) from None
         previous = session
-        yield line, session, [snap(p) for p in prices], volume
+        yield line, session, *snapped
 
 
 def parse(path: Path) -> list[StoredQuote]:
