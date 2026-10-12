@@ -4,20 +4,20 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from market_data.model import Instrument
+from market_data.model import Instrument, Isin
 
 
 class SymbolIndex:
     """Keyed by both ISIN and xtb ticker. Callers keyed by broker ticker (state files) hit the xtb
     key; callers keyed by ISIN (e.g. index-membership sourcing) hit the ISIN key — no suffix guess.
-    The file is read once, at construction."""
+    The file is read once, at construction; a key that is not a valid ISIN fails it there."""
 
     def __init__(self, path: Path) -> None:
         with open(path) as f:
             data = json.load(f)
         idx = {}
         for isin, e in data["instruments"].items():
-            entry = {"isin": isin, **e}
+            entry = {"isin": Isin.parse(isin), **e}
             idx[isin] = entry                          # resolve by ISIN (durable, rename-proof)
             xtb = e.get("symbols", {}).get("xtb")
             if xtb:

@@ -9,12 +9,12 @@ import unittest
 from datetime import date
 
 import support  # noqa: F401  (puts scripts/ on sys.path)
-from market_data.model import DateRange, Instrument
+from market_data.model import DateRange, Instrument, Isin
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 from market_data.quote_chain import QuoteChain
 
-INSTRUMENT = Instrument(key="PKN.PL", isin="PL0000000000", symbols={"yahoo": "PKN.WA"})
+INSTRUMENT = Instrument(key="PKN.PL", isin=Isin.parse("PLPKN0000018"), symbols={"yahoo": "PKN.WA"})
 PERIOD = DateRange(date(2026, 7, 1), date(2026, 7, 24))
 NOW = 1784973600.0
 

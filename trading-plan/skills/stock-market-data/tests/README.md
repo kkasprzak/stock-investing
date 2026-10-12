@@ -16,13 +16,16 @@ One test file per module of `scripts/`, plus shared support:
 ```
 support.py              frozen clock (FROZEN_TODAY, FROZEN_NOW, GPW_CLOSE, warsaw()), TOL, fixture
                         loaders (load_yahoo, load_stooq), DIVIDEND_WEEKS, pipeline(); puts ../scripts on sys.path
-test_model.py           market_data/model.py — DateRange, Interval, Instrument
+test_model.py           market_data/model.py — DateRange, Interval, Instrument, Isin, Price, Volume, DailyQuote
+test_store_file.py      market_data/store_file.py — the store's file schema, StoredQuote, to_bar
 test_indicators.py      market_data/indicators.py — _period, aggregate, last_closed, ATR, swing lows, Stooq oracle
 test_quote_chain.py     market_data/quote_chain.py — QuoteChain: trust order, gap filling, sources that did not answer
 test_yahoo.py           market_data/adapters/yahoo.py — resolve, range buckets, cache, session close, backfill, live smoke
 test_symbol_index.py    market_data/adapters/symbol_index.py — lookup by ISIN / broker ticker, broker symbol
 test_cli.py             scripts/quotes.py — build_source (the composition root) and main() over an injected source
-fixtures/               captured Yahoo responses and the Stooq CSVs the golden values come from
+fixtures/               captured Yahoo responses and the Stooq CSVs the golden values come from;
+                        stooq_*_raw.csv are unedited Stooq exports, fixtures/store/ holds files in
+                        the store's own schema
 ```
 
 Every test file imports `support` (`import support` or `from support import ...`) before anything

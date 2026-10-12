@@ -1,12 +1,15 @@
 """market_data.adapters.symbol_index — symbols.json read into Instruments, by ISIN or broker ticker."""
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 import unittest
 
 import support  # noqa: F401  (puts scripts/ on sys.path)
 import quotes
 from market_data.adapters.symbol_index import SymbolIndex
-from market_data.model import Instrument
+from market_data.model import Instrument, Isin
 
 
 class TestLookup(unittest.TestCase):
@@ -15,20 +18,31 @@ class TestLookup(unittest.TestCase):
 
     def test_by_isin(self):
         i = self.index.lookup("PLPKN0000018")
-        self.assertEqual((i.key, i.isin), ("PLPKN0000018", "PLPKN0000018"))
+        self.assertEqual((i.key, i.isin), ("PLPKN0000018", Isin.parse("PLPKN0000018")))
         self.assertEqual(dict(i.symbols), {"xtb": "PKN.PL", "yahoo": "PKN.WA"})
 
     def test_by_broker_ticker(self):
         i = self.index.lookup("PKN.PL")
-        self.assertEqual((i.key, i.isin), ("PKN.PL", "PLPKN0000018"))
+        self.assertEqual((i.key, i.isin), ("PKN.PL", Isin.parse("PLPKN0000018")))
         self.assertEqual(dict(i.symbols), {"xtb": "PKN.PL", "yahoo": "PKN.WA"})
 
     def test_rename_guard(self):            # xStation SPL.PL <-> Yahoo EBP.WA, bridged by ISIN
         i = self.index.lookup("SPL.PL")
-        self.assertEqual((i.isin, i.symbols.get("yahoo")), ("PLBZ00000044", "EBP.WA"))
+        self.assertEqual((i.isin, i.symbols.get("yahoo")), (Isin.parse("PLBZ00000044"), "EBP.WA"))
 
     def test_unknown_key_is_unmapped(self):
         self.assertEqual(self.index.lookup("ZZZ.PL"), Instrument.unmapped("ZZZ.PL"))
+
+
+class TestConstruction(unittest.TestCase):
+    def test_a_bad_isin_in_the_map_fails_at_construction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "symbols.json")
+            with open(path, "w") as f:
+                json.dump({"instruments": {"PLPKN0000018": {"symbols": {"xtb": "PKN.PL"}},
+                                           "PLPEKAO00017": {"symbols": {"xtb": "PEO.PL"}}}}, f)
+            with self.assertRaisesRegex(ValueError, "PLPEKAO00017"):
+                SymbolIndex(path)
 
 
 class TestBrokerSymbol(unittest.TestCase):
