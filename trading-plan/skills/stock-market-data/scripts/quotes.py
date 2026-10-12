@@ -7,12 +7,14 @@ Agent-first tool. Output is self-describing JSON (default) — read the keys, no
   python3 quotes.py PKN.PL --bars 10              # more history per symbol
   python3 quotes.py PKN.PL --atr                 # + Wilder ATR(14) on that interval (--atr 20 to override)
   python3 quotes.py PKN.PL --swings              # + confirmed swing lows (2 sessions each side; --swings 3 to override)
-Fetches recent completed candles from Yahoo (~15 min delayed) for the given instruments, resolved via
-the shared symbols.json map (broker -> vendor symbol). W1/MN are aggregated from the daily series
-(Yahoo's native weekly/monthly bars split the current period unreliably). Evaluation/monitoring only —
+  python3 quotes.py PKN.PL --store DIR           # this project's own candle store first, Yahoo after
+Reads recent completed candles for the given instruments, resolved via the shared symbols.json map
+(broker -> ISIN and vendor symbol): from the own candle store (--store, one CSV per ISIN) when given,
+and from Yahoo (~15 min delayed) for every session the store does not have. W1/MN are aggregated
+from the daily series (Yahoo's native weekly/monthly bars split the current period unreliably). Evaluation/monitoring only —
 execution prices come from the execution venue, not here. A price it can't read is "[NO DATA]".
 Layout: this CLI talks to one QuoteSource port (market_data/ports.py), behind which a QuoteChain asks
-its sources in trust order, each an adapter (today only market_data/adapters/yahoo.py).
+its sources in trust order, each an adapter (market_data/adapters/store.py, then .../yahoo.py).
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)                        # market_data/ sits next to this file (PYTHONSAFEPATH-proof)
 
 from market_data.adapters import yahoo                      # noqa: E402
+from market_data.adapters.store import StoreQuotes          # noqa: E402
 from market_data.adapters.symbol_index import SymbolIndex   # noqa: E402
 from market_data.adapters.yahoo import YahooQuotes, fetch_chart   # noqa: E402
 from market_data.indicators import (ATR_DEFAULT_N, SWING_SESSIONS_DEFAULT,   # noqa: E402
@@ -54,8 +57,9 @@ def build_source(cache: bool, *, store_dir: Path | None = None, cache_dir: Path 
     # no --cache = no cache: fail-safe (a forgotten flag means slower, never stale)
     yahoo_source = YahooQuotes(fetch=fetch, cache_dir=cache_dir if cache else None, sleep=sleep)
     # Order on this list = trust hierarchy (ADR 0000, docs/adr/0000-own-candle-store-is-the-most-
-    # trusted-source-of-market-data.md): the own quote store goes first once it exists.
-    return QuoteChain([yahoo_source])
+    # trusted-source-of-market-data.md): the own candle store first, Yahoo patches what it lacks.
+    store = [StoreQuotes(store_dir)] if store_dir is not None else []
+    return QuoteChain([*store, yahoo_source])
 
 
 def quote_record(daily, interval, bars, today, atr_n=None, swings=None):

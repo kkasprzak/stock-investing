@@ -18,12 +18,14 @@ from pathlib import Path
 from support import FROZEN_TODAY, FROZEN_NOW, FakeSource, load_yahoo
 import quotes
 from market_data.adapters import yahoo
-from market_data.model import DateRange, Instrument
+from market_data.adapters.store import StoreQuotes
+from market_data.model import DateRange, Instrument, Isin
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 from market_data.quote_chain import QuoteChain
 
 PKN = Instrument(key="PKN.PL", isin=None, symbols={"yahoo": "PKN.WA"})
+PKN_ISIN = Instrument(key="PKN.PL", isin=Isin.parse("PLPKN0000018"), symbols={"yahoo": "PKN.WA"})
 PERIOD = DateRange(date.fromisoformat(FROZEN_TODAY) - timedelta(days=300),
                    date.fromisoformat(FROZEN_TODAY))
 
@@ -56,6 +58,19 @@ class TestBuildSource(unittest.TestCase):
     def test_with_cache_writes_one_file_and_reuses_it(self):
         self.ask_twice(cache=True)
         self.assertEqual(os.listdir(self.tmp), ["PKN.WA.json"])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_with_a_store_the_store_is_asked_before_yahoo(self):
+        """Order shows in behaviour: on a date both have, the store's bar is the one that comes."""
+        store_dir = self.tmp / "store"
+        store_dir.mkdir()
+        (store_dir / "PLPKN0000018.csv").write_text(
+            "date,open,high,low,close,volume,source\n2026-07-24,1,1,1,1,7,stooq\n")
+        source = quotes.build_source(False, store_dir=store_dir, cache_dir=self.tmp / "cache",
+                                     fetch=self.fetch, sleep=lambda s: None)
+        bars = source.daily(PKN_ISIN, PERIOD, now=FROZEN_NOW).bars
+        self.assertEqual([(b["date"], b["c"], b["source"]) for b in bars[-2:]],
+                         [(bars[-2]["date"], bars[-2]["c"], "yahoo"), ("2026-07-24", 1.0, "store")])
         self.assertEqual(len(self.calls), 1)
 
 
@@ -134,6 +149,14 @@ class TestMain(unittest.TestCase):
         self.assertEqual((rec["ok"], rec["reason"], rec["unavailable"]),
                          (False, "rate_limited", [{"source": "store", "reason": "not_found"},
                                                   {"source": "yahoo", "reason": "rate_limited"}]))
+
+    def test_project_without_a_store_still_gets_yahoos_bars_and_is_told_so(self):
+        missing = Path(tempfile.mkdtemp()) / "missing"
+        self.addCleanup(shutil.rmtree, missing.parent, True)
+        yahoo_ok = FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
+        rec = run(["PKN.PL"], QuoteChain([StoreQuotes(missing), yahoo_ok]))["quotes"]["PKN.PL"]
+        self.assertEqual((rec["ok"], rec["bars"][-1], rec["unavailable"]),
+                         (True, BARS[-1], [{"source": "store", "reason": "not_found"}]))
 
     def test_no_bars_from_a_source_that_answered_stays_ok(self):
         """Yahoo alone answering with nothing is an answer: ok:true, as before the store."""
