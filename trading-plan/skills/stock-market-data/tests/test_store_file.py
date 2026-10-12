@@ -195,6 +195,13 @@ class TestWrite(unittest.TestCase):
         write(self.path, fixture_rows(STORE_PKN))
         self.assertEqual(self.path.read_bytes(), Path(STORE_PKN).read_bytes())
 
+    def test_round_trip_through_read(self):
+        write(self.path, read(Path(STORE_PKN)))
+        self.assertEqual(self.path.read_bytes(), Path(STORE_PKN).read_bytes())
+        rows = [row(8, c="101.10"), row(9, source="other")]
+        write(self.path, rows)
+        self.assertEqual(read(self.path), rows)
+
     def test_sorts_by_session(self):
         write(self.path, list(reversed(fixture_rows(STORE_PKN))))
         self.assertEqual(self.path.read_bytes(), Path(STORE_PKN).read_bytes())

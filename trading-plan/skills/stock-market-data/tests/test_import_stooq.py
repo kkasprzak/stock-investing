@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import csv
 import io
+import json
 import os
 import shutil
 import tempfile
@@ -229,6 +230,115 @@ def run(argv, today=None):
         except SystemExit as e:
             code = e.code
     return code, out.getvalue(), err.getvalue()
+
+
+TODAY = date(2026, 7, 8)        # a Wednesday; the inline exports below close on Tue 07-07
+PKN_FILE = "PLPKN0000018.csv"
+PKN_EXPORT = (PL_HEADER + "2026-07-03,133.52,133.62,131.28,132.92,742988\n"
+                          "2026-07-06,133.24,133.58,131.88,133.5,868792\n"
+                          "2026-07-07,133.5,134,132,133,500000\n")
+
+
+class TestImport(TempDir):
+    """main() end to end on a temp store: parse, merge, write, report."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = self.tmp / "data" / "market-data"           # does not exist yet
+
+    def run_import(self, export: Path, key="PKN.PL", today=TODAY):
+        code, out, err = run(["--store", str(self.store), "stooq", str(export), "--for", key],
+                             today=today)
+        return code, (json.loads(out) if out else None), err
+
+    def test_first_import_creates_the_store_and_the_file(self):
+        code, report, err = self.run_import(Path(FX) / "stooq_ale_d_raw.csv", "ALE.PL",
+                                            today=date(2026, 10, 12))
+        self.assertEqual((code, err), (0, ""))
+        path = self.store / "LU2237380790.csv"
+        self.assertEqual(report, {"isin": "LU2237380790", "key": "ALE.PL", "file": str(path),
+                                  "added": 114, "unchanged": 0, "changed": 0, "changed_dates": [],
+                                  "skipped_today": 0,
+                                  "imported": {"first": "2026-05-04", "last": "2026-10-09"}})
+        self.assertTrue(path.read_bytes().startswith(b"date,open,high,low,close,volume,source\n"
+                                                     b"2026-05-04,30,30.35,29.685,29.82,2488061,"
+                                                     b"stooq\n"))
+
+    def test_the_same_export_twice_changes_nothing(self):
+        export = self.export(PKN_EXPORT)
+        self.run_import(export)
+        first = (self.store / PKN_FILE).read_bytes()
+        code, report, _ = self.run_import(export)
+        self.assertEqual(code, 0)
+        self.assertEqual((report["added"], report["unchanged"], report["changed"]), (0, 3, 0))
+        self.assertEqual((self.store / PKN_FILE).read_bytes(), first)
+
+    def test_a_new_session_is_added_to_what_is_stored(self):
+        self.run_import(self.export(PKN_EXPORT))
+        code, report, _ = self.run_import(self.export(
+            PL_HEADER + "2026-07-07,133.5,134,132,133,500000\n2026-07-08,133,135,132.5,134.1,1\n"),
+            today=date(2026, 7, 9))
+        self.assertEqual((code, report["added"], report["unchanged"]), (0, 1, 1))
+        self.assertEqual(len(self.read_store()), 4)
+
+    def test_a_changed_close_is_reported_with_its_date(self):
+        self.run_import(self.export(PKN_EXPORT))
+        code, report, _ = self.run_import(self.export(PKN_EXPORT.replace(",133,500000",
+                                                                         ",133.2,500000")))
+        self.assertEqual((code, report["changed"], report["changed_dates"], report["unchanged"]),
+                         (0, 1, ["2026-07-07"], 2))
+        self.assertEqual(self.read_store()[-1][4], "133.2")
+
+    def test_todays_session_is_skipped_and_counted(self):
+        code, report, _ = self.run_import(self.export(PKN_EXPORT), today=date(2026, 7, 7))
+        self.assertEqual((code, report["added"], report["skipped_today"]), (0, 2, 1))
+        self.assertEqual(report["imported"], {"first": "2026-07-03", "last": "2026-07-06"})
+        self.assertEqual([r[0] for r in self.read_store()], ["2026-07-03", "2026-07-06"])
+
+    def test_only_todays_session_writes_nothing(self):
+        code, report, _ = self.run_import(
+            self.export(PL_HEADER + "2026-07-08,133,135,132.5,134.1,1\n"))
+        self.assertEqual((code, report["added"], report["skipped_today"], report["imported"]),
+                         (0, 0, 1, {"first": None, "last": None}))
+        self.assertFalse(self.store.exists())
+
+    def test_a_session_after_today_rejects_the_file(self):
+        code, report, err = self.run_import(self.export(PKN_EXPORT), today=date(2026, 7, 6))
+        self.assertEqual((code, report), (1, None))
+        self.assertIn("line 4:", err)
+        self.assertIn("2026-07-07", err)
+        self.assertFalse(self.store.exists())
+
+    def test_a_bad_row_rejects_the_file_and_leaves_the_store_byte_for_byte(self):
+        self.run_import(self.export(PKN_EXPORT))
+        before = (self.store / PKN_FILE).read_bytes()
+        code, report, err = self.run_import(self.export(
+            PKN_EXPORT + "2026-07-08,133,135,136,134.1,1\n"), today=date(2026, 7, 9))  # low > high
+        self.assertEqual((code, report), (1, None))
+        self.assertIn("line 5:", err)
+        self.assertEqual((self.store / PKN_FILE).read_bytes(), before)
+
+    def test_a_broken_store_file_is_not_overwritten(self):
+        self.store.mkdir(parents=True)
+        (self.store / PKN_FILE).write_bytes(b"not,a,store,file\n")
+        code, report, err = self.run_import(self.export(PKN_EXPORT))
+        self.assertEqual((code, report), (1, None))
+        self.assertIn(PKN_FILE, err)
+        self.assertEqual((self.store / PKN_FILE).read_bytes(), b"not,a,store,file\n")
+
+    def test_a_missing_export_is_rejected(self):
+        code, report, err = self.run_import(self.tmp / "nope.csv")
+        self.assertEqual((code, report), (1, None))
+        self.assertIn("nope.csv", err)
+        self.assertFalse(self.store.exists())
+
+    def test_an_isin_works_as_the_key(self):
+        code, report, _ = self.run_import(self.export(PKN_EXPORT), key="PLPKN0000018")
+        self.assertEqual((code, report["isin"], report["key"]), (0, "PLPKN0000018", "PLPKN0000018"))
+
+    def read_store(self):
+        with open(self.store / PKN_FILE, encoding="utf-8", newline="") as f:
+            return list(csv.reader(f))[1:]
 
 
 class TestImportUsage(TempDir):
