@@ -20,7 +20,7 @@ support.py              frozen clock (FROZEN_TODAY, FROZEN_NOW, GPW_CLOSE, warsa
                         puts ../scripts on sys.path
 test_model.py           market_data/model.py — DateRange, Interval, Instrument, Isin, Price, Volume, DailyQuote
 test_store_file.py      market_data/store_file.py — the store's file schema: read, write, merge, StoredQuote, to_bar
-test_store.py           market_data/adapters/store.py — StoreQuotes: what the store answers, not_found, malformed,
+test_store.py           market_data/adapters/store.py — StoreQuotes: what the store answers, no_store, malformed,
                         the store ahead of a lower source in a chain
 test_import_stooq.py    market_data/importers/stooq.py and scripts/import_quotes.py — parse, snap, the real-export
                         guards and ATR pins, the importer end to end on a temp store, its usage errors
@@ -117,7 +117,7 @@ values; the tests re-assert them on every run.
   round-trips byte for byte, sorts, replaces atomically; `merge` counts added / unchanged / changed
   by value (`133.5` equals `133.50`), `source` aside.
 - **Store, adapter** (`test_store.py`) — every row up to the period end and none after; an empty
-  answer for an ISIN without a file (still resolved) and for an unmapped instrument; `not_found`
+  answer for an ISIN without a file (still resolved) and for an unmapped instrument; `no_store`
   when the directory is missing, `malformed` (plus `path:line` on stderr) for a broken file; in a
   chain the store wins a shared date.
 - **Importer** (`test_import_stooq.py`) — snap examples for prices and volume (the radius is 1e-5
@@ -130,14 +130,18 @@ values; the tests re-assert them on every run.
   pin. `main()` on a temp store: the first import creates the store, the same export twice changes
   nothing (same bytes), a changed close is reported with its date, today's row is imported, a
   header-only export writes nothing. Exit 1, store untouched: a session after today, a bad row (the stored file stays byte for
-  byte), a broken store file (not overwritten), a missing export. Exit 2: a missing `--store`, an
-  unknown ticker, a literal `${` in `--store`.
+  byte), a broken store file (not overwritten), a missing export; and, without a traceback
+  (`TestImportStorePath`), a `--store` that is a file, a store directory without write permission,
+  one that cannot be created (both skipped as root). Exit 2: a missing `--store`, an unknown
+  ticker, a literal `${` in `--store`, a `--store` whose parent directory does not exist (nothing
+  created).
 - **CLI** (`test_cli.py`) — `build_source` without a cache writes nothing, with one writes one
   file, with a store asks it before Yahoo; the `ok:true` / `ok:false` records (one `ok:false` path
   for a failed chain and for no bars while a source did not answer), the header naming every
   source in trust order, and `--bars` edge values that must not crash.
   `TestFlagsReachTheCompositionRoot`: `--store` and `--cache` reach `build_source` through `main()`,
-  and a literal `${` in `--store` exits 2 before anything is built. `TestOutputPinnedAt040`: without
+  and a literal `${` in `--store`, or a `--store` whose parent directory does not exist, exits 2
+  before anything is built; a missing store directory under an existing parent still reaches it. `TestOutputPinnedAt040`: without
   a store the output equals `fixtures/cli_0_4_0_PKN.json`.
 - **Live smoke** (opt-in, `RUN_LIVE_SMOKE=1`) — hits Yahoo to catch API/shape drift the fixtures
   can't see until re-captured.

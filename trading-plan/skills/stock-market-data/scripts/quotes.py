@@ -103,13 +103,20 @@ def _no_data(xtb, resolved, failures):
 
 
 def _store_dir(text: str) -> Path:
-    """--store as given, never touched here. A literal `${` is a skill variable Claude Code did not
-    substitute: reading it as a path would turn a broken setup into an innocent store not_found."""
+    """--store as given, never created here. A literal `${` is a skill variable Claude Code did not
+    substitute, and a missing parent is most likely an empty one (bash turns ${CLAUDE_PROJECT_DIR}/
+    data/market-data into /data/market-data): reading either as a path would turn a broken setup
+    into an innocent store no_store. The store directory itself missing is a project without one."""
     if "${" in text:
         raise argparse.ArgumentTypeError(
             f"{text!r} holds a variable that was not substituted (literal '${{'); pass the "
             f"project's real path, e.g. --store /path/to/project/data/market-data")
-    return Path(text)
+    path = Path(text)
+    if not path.parent.exists():
+        raise argparse.ArgumentTypeError(
+            f"parent directory '{path.parent}' does not exist; was ${{CLAUDE_PROJECT_DIR}} "
+            f"substituted?")
+    return path
 
 
 def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
@@ -139,7 +146,7 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
     index = SymbolIndex(SYMBOLS)
     interval = Interval(args.interval)
     end = today or date.today()
-    today = end.isoformat()
+    end_iso = end.isoformat()
     # --bars <= 0 never failed and must not now: DateRange would reject an inverted range.
     days = min(max(calendar_days(interval, bars_needed(max(args.bars, 1), args.atr, args.swings)),
                    MIN_PERIOD_DAYS),
@@ -161,7 +168,7 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
             continue
         symbol, by = _yahoo_fields(series.resolved)
         quotes[tk] = {"yahoo_symbol": symbol, "xtb": xtb, "resolved_by": by, "ok": True,
-                      **quote_record(list(series.bars), interval, args.bars, today, args.atr,
+                      **quote_record(list(series.bars), interval, args.bars, end_iso, args.atr,
                                      args.swings)}
         if series.unavailable:                      # only when some source did not answer
             quotes[tk]["unavailable"] = _unavailable(series.unavailable)

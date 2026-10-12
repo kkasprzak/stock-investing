@@ -80,7 +80,7 @@ def bar(day, close, source="yahoo"):
 
 BARS = tuple(bar(f"2026-07-{d:02d}", float(d)) for d in (20, 21, 22, 23, 24))
 YAHOO_PKN = Resolution("yahoo", "PKN.WA", ResolvedBy.SYMBOLS_JSON)
-STORE_PKN = Resolution("store", "PKN", ResolvedBy.SYMBOLS_JSON)
+STORE_PKN = Resolution("store", "PLPKN0000018", ResolvedBy.ISIN)
 
 
 def run(argv, source=None, **seams):
@@ -154,12 +154,12 @@ class TestMain(unittest.TestCase):
 
     def test_chain_where_nothing_answered_lists_both_failures(self):
         store_down = FakeSource(error=QuoteSourceUnavailableError(
-            (SourceFailure("store", "not_found"),)))
+            (SourceFailure("store", "no_store"),)))
         yahoo_down = FakeSource(error=QuoteSourceUnavailableError(
             (SourceFailure("yahoo", "rate_limited"),), (YAHOO_PKN,)))
         rec = run(["PKN.PL"], QuoteChain([store_down, yahoo_down]))["quotes"]["PKN.PL"]
         self.assertEqual((rec["ok"], rec["reason"], rec["unavailable"]),
-                         (False, "rate_limited", [{"source": "store", "reason": "not_found"},
+                         (False, "rate_limited", [{"source": "store", "reason": "no_store"},
                                                   {"source": "yahoo", "reason": "rate_limited"}]))
 
     def test_project_without_a_store_still_gets_yahoos_bars_and_is_told_so(self):
@@ -168,7 +168,7 @@ class TestMain(unittest.TestCase):
         yahoo_ok = FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
         rec = run(["PKN.PL"], QuoteChain([StoreQuotes(missing), yahoo_ok]))["quotes"]["PKN.PL"]
         self.assertEqual((rec["ok"], rec["bars"][-1], rec["unavailable"]),
-                         (True, BARS[-1], [{"source": "store", "reason": "not_found"}]))
+                         (True, BARS[-1], [{"source": "store", "reason": "no_store"}]))
 
     def test_no_bars_from_a_source_that_answered_stays_ok(self):
         """Yahoo alone answering with nothing is an answer: ok:true, as before the store."""
@@ -261,6 +261,24 @@ class TestFlagsReachTheCompositionRoot(unittest.TestCase):
         self.assertIn("${", err.getvalue())
         self.assertIn("not substituted", err.getvalue())
         self.assertEqual(os.listdir(self.tmp), [])
+
+    def test_store_whose_parent_is_missing_is_rejected_before_anything_runs(self):
+        """An empty ${CLAUDE_PROJECT_DIR} expands to '', so --store reads /data/market-data: its
+        parent is missing, and that must not read as 'no store'."""
+        store = self.tmp / "data" / "market-data"            # tmp/data does not exist
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as exit_:
+            run(["--store", str(store), "PKN.PL"], build=self.build)
+        self.assertEqual(exit_.exception.code, 2)
+        self.assertEqual(self.built, [])
+        self.assertIn(f"parent directory '{self.tmp / 'data'}' does not exist", err.getvalue())
+        self.assertIn("was ${CLAUDE_PROJECT_DIR} substituted?", err.getvalue())
+        self.assertEqual(os.listdir(self.tmp), [])
+
+    def test_missing_store_under_an_existing_parent_still_reaches_build(self):
+        """The store directory itself missing is a project without a store yet, not a bad path."""
+        run(["--store", str(self.tmp / "market-data"), "PKN.PL"], build=self.build)
+        self.assertEqual(self.built, [(False, self.tmp / "market-data")])
 
 
 if __name__ == "__main__":

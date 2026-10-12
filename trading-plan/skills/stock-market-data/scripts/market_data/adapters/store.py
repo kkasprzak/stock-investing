@@ -23,7 +23,7 @@ class StoreQuotes:
         allows more, and a cut there would hand the window's old edge to a lower source. `now` is
         unused: only closed sessions are ever stored."""
         if not self._dir.is_dir():          # the project has no store yet: say so on every record
-            raise QuoteSourceUnavailableError((SourceFailure(self.name, "not_found"),))
+            raise QuoteSourceUnavailableError((SourceFailure(self.name, "no_store"),))
         if instrument.isin is None:
             return QuoteSeries((), ())
         resolution = Resolution(self.name, str(instrument.isin), ResolvedBy.ISIN)

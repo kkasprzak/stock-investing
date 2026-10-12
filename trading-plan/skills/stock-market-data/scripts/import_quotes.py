@@ -4,10 +4,11 @@
   python3 import_quotes.py --store DIR stooq <export.csv> --for PEO.PL
 
 The write side of the store (quotes.py only reads it). One file per ISIN, <ISIN>.csv under --store;
-the instrument is named with --for, a broker ticker or an ISIN from symbols.json. A row in a daily
-export is a closed session, so a row dated today is imported; one dated after today rejects the
-file. The first problem rejects the whole file and leaves the store untouched. Prints a JSON report of what was
-added and what changed; committing the store is the user's step (git diff is the review).
+the instrument is named with --for, a broker ticker or an ISIN from symbols.json. Stooq's daily
+export lists closed sessions only (a day that has not closed is not in it), so a row dated today is
+that closed session and is imported; one dated after today rejects the file. The first problem
+rejects the whole file and leaves the store untouched. Prints a JSON report of what was added and
+what changed; committing the store is the user's step (git diff is the review).
 Never fetches quotes and never runs git.
 """
 from __future__ import annotations
@@ -48,6 +49,11 @@ def main(argv=None, *, today: date | None = None) -> int:
         print(f"--store {args.store!r} holds an unsubstituted variable; pass the real path",
               file=sys.stderr)
         return EXIT_USAGE
+    if not Path(args.store).parent.exists():
+        # Most likely an empty ${CLAUDE_PROJECT_DIR}: bash turns it into /data/market-data.
+        print(f"--store {args.store!r}: parent directory '{Path(args.store).parent}' does not "
+              f"exist; was ${{CLAUDE_PROJECT_DIR}} substituted?", file=sys.stderr)
+        return EXIT_USAGE
     instrument = SymbolIndex(SYMBOLS).lookup(args.key)
     if instrument.isin is None:
         print(f"{args.key}: not in symbols.json, so no ISIN to name the store file by",
@@ -83,8 +89,11 @@ def main(argv=None, *, today: date | None = None) -> int:
             return _rejected(f"{e}; the store file was left as it is")
         merged = store_file.merge(existing, incoming)
         if merged.added or merged.changed:      # nothing new: leave the file (and its mtime) alone
-            store.mkdir(parents=True, exist_ok=True)
-            store_file.write(path, merged.rows)
+            try:
+                store.mkdir(exist_ok=True)      # the parent was checked above; never create it
+                store_file.write(path, merged.rows)
+            except OSError as e:                # --store is a file, no write permission, disk full
+                return _rejected(f"{path}: cannot write: {e}")
         report.update(added=merged.added, unchanged=merged.unchanged, changed=merged.changed,
                       changed_dates=[d.isoformat() for d in merged.changed_dates])
     json.dump(report, sys.stdout, ensure_ascii=False, indent=2)

@@ -46,8 +46,10 @@ by import and asked before Yahoo, which only fills what the store lacks
 
 - **Every project that uses this skill has its own store**, under `data/market-data/` in that
   project's repository. There is no global store. The `Run` lines point at it.
-- `unavailable: [{source: "store", reason: "not_found"}]` on every record means this project has no
-  store yet: do the first import (below). Until then the bars come from Yahoo alone.
+- `unavailable: [{source: "store", reason: "no_store"}]` on every record means this project has no
+  store yet: do the first import (below). Until then the bars come from Yahoo alone. `quotes.py`
+  exiting 2 with "parent directory ... does not exist" means `--store` did not point into the
+  project (an empty `${CLAUDE_PROJECT_DIR}` gives `/data/market-data`): fix the path, do not import.
 - **Feeding it** — one export per instrument, keyed the same way as `quotes.py`:
 
   ```
@@ -55,21 +57,23 @@ by import and asked before Yahoo, which only fills what the store lacks
   ```
 
   The export is Stooq's **daily** history with "pomijaj splity + dywidendy" (skip splits and
-  dividends), taken **after the session has closed**: the import contract is complete data of closed
-  sessions only, and the importer does not know the exchange calendar, so it cannot rescue an export
-  taken mid-session. History from 2022 is enough. The export's prices and volume carry noise of about
+  dividends). Stooq's daily export lists closed sessions only: a day that has not closed is not in
+  it, so every row is a complete candle and a row dated today is today's closed session, imported.
+  History from 2022 is enough. The export's prices and volume carry noise of about
   1e-5 of each value, which the importer takes off; a value further off rejects the whole file
-  (Stooq's history before ~2022 has more noise: export a shorter range). A row dated today is
-  imported: Stooq's daily export lists closed sessions only. A row dated after today rejects the
-  whole file.
+  (Stooq's history before ~2022 has more noise: export a shorter range). A row dated after today
+  rejects the whole file.
 - The importer prints a JSON report: `{isin, key, file, added, unchanged, changed, changed_dates[],
   imported: {first, last}}`. `changed` > 0 means sessions already in the store now
   read differently: check `changed_dates` and the `git diff` before keeping them. When `added` and
   `changed` are both 0 the importer writes nothing, so importing the same export again leaves the
-  file as it was; the `--store` directory itself appears only with the first write. Exit 1: the
+  file as it was; the `--store` directory itself appears only with the first write, and only under
+  a parent that already exists. Exit 1: the
   export was rejected (`line N: why` on stderr), is missing, or the store file is unreadable or
-  malformed; the store was not touched. Exit 2: bad arguments (including a missing `--store`, or one
-  still holding a literal `${`), or a ticker with no ISIN in the map; nothing is created.
+  malformed, or the store cannot be written (`--store` is a file, no write permission); the store
+  file was not touched. Exit 2: bad arguments (including a missing `--store`, one still holding a
+  literal `${`, or one whose parent directory does not exist), or a ticker with no ISIN in the map;
+  nothing is created.
 - **Committing the store is the user's step**; the importer never runs git. The project's
   `.gitattributes` should carry `data/market-data/*.csv text eol=lf`.
 - Consequences: with a store, a Yahoo outage still gives `ok:true` on the store's bars, and the

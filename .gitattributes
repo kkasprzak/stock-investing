@@ -1,0 +1,2 @@
+# Stooq fixtures stay as Stooq serves them (CRLF), whatever core.autocrlf says.
+trading-plan/skills/stock-market-data/tests/fixtures/*.csv -text

@@ -336,6 +336,7 @@ class TestImport(TempDir):
     def setUp(self):
         super().setUp()
         self.store = self.tmp / "data" / "market-data"           # does not exist yet
+        self.store.parent.mkdir()                                # its parent does, as in a project
 
     def run_import(self, export: Path, key="PKN.PL", today=TODAY):
         code, out, err = run(["--store", str(self.store), "stooq", str(export), "--for", key],
@@ -456,6 +457,68 @@ class TestImportUsage(TempDir):
         self.assertEqual((code, out), (2, ""))
         self.assertIn("${", err)
         self.assertFalse((self.tmp / "${CLAUDE_PROJECT_DIR}").exists())
+
+
+class TestImportStorePath(TempDir):
+    """Where --store points: a missing parent is a usage error, a store that cannot be written is a
+    rejection, and neither ends in a traceback."""
+
+    def setUp(self):
+        super().setUp()
+        self.read_only = []                 # given write back before tearDown removes the temp dir
+
+    def tearDown(self):
+        for path in self.read_only:
+            path.chmod(0o755)
+        super().tearDown()
+
+    def make_read_only(self, path: Path):
+        path.chmod(0o555)
+        self.read_only.append(path)
+
+    def run_import(self, store: Path):
+        return run(["--store", str(store), "stooq", str(self.export(PKN_EXPORT)), "--for", "PKN.PL"],
+                   today=TODAY)
+
+    def assertRejectedCleanly(self, code, out, err):
+        self.assertEqual((code, out), (1, ""))
+        self.assertTrue(err.startswith("import rejected, nothing written: "), err)
+        self.assertNotIn("Traceback", err)
+
+    def test_store_whose_parent_is_missing_is_a_usage_error_and_creates_nothing(self):
+        # An empty ${CLAUDE_PROJECT_DIR} expands to '', and --store reads /data/market-data.
+        store = self.tmp / "data" / "market-data"
+        code, out, err = self.run_import(store)
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn(f"parent directory '{self.tmp / 'data'}' does not exist", err)
+        self.assertIn("was ${CLAUDE_PROJECT_DIR} substituted?", err)
+        self.assertFalse((self.tmp / "data").exists())
+
+    def test_store_that_is_a_file_is_rejected_and_the_file_left_alone(self):
+        store = self.tmp / "market-data"
+        store.write_bytes(b"not a directory\n")
+        code, out, err = self.run_import(store)
+        self.assertRejectedCleanly(code, out, err)
+        self.assertIn(str(store), err)
+        self.assertEqual(store.read_bytes(), b"not a directory\n")
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root writes anywhere")
+    def test_store_without_write_permission_is_rejected(self):
+        store = self.tmp / "market-data"
+        store.mkdir()
+        self.make_read_only(store)
+        code, out, err = self.run_import(store)
+        self.assertRejectedCleanly(code, out, err)
+        self.assertEqual(os.listdir(store), [])
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root writes anywhere")
+    def test_store_that_cannot_be_created_is_rejected(self):
+        parent = self.tmp / "data"
+        parent.mkdir()
+        self.make_read_only(parent)
+        code, out, err = self.run_import(parent / "market-data")
+        self.assertRejectedCleanly(code, out, err)
+        self.assertEqual(os.listdir(parent), [])
 
 
 if __name__ == "__main__":

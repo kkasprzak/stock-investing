@@ -78,11 +78,12 @@ class TestStoreDidNotAnswer(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_missing_store_directory_is_not_found_even_for_a_known_isin(self):
-        """No directory = the project has no store yet: a signal, not 'the store lacks PKN'."""
+    def test_missing_store_directory_is_no_store_even_for_a_known_isin(self):
+        """No directory = the project has no store yet: a signal, not 'the store lacks PKN', and
+        not Yahoo's not_found ('no such symbol') either."""
         with self.assertRaises(QuoteSourceUnavailableError) as caught:
             StoreQuotes(self.tmp / "missing").daily(PKN, PERIOD, now=NOW)
-        self.assertEqual(caught.exception.failures, (SourceFailure("store", "not_found"),))
+        self.assertEqual(caught.exception.failures, (SourceFailure("store", "no_store"),))
         self.assertEqual(caught.exception.resolved, ())
         self.assertFalse((self.tmp / "missing").exists())
 
