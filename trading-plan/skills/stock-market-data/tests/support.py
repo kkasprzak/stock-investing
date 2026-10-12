@@ -18,8 +18,8 @@ SCRIPTS = os.path.join(HERE, "..", "scripts")
 if SCRIPTS not in sys.path:
     sys.path.insert(0, SCRIPTS)
 
-import quotes                                       # noqa: E402  (needs SCRIPTS on sys.path)
-from market_data.adapters import yahoo              # noqa: E402
+from market_data.adapters import yahoo              # noqa: E402  (needs SCRIPTS on sys.path)
+from market_data.indicators import aggregate        # noqa: E402
 
 FROZEN_TODAY = "2026-07-25"          # a Saturday; last session in fixtures is Fri 2026-07-24
 FROZEN_NOW = 1784973600              # that Saturday 12:00 Warsaw — epoch for session-close checks
@@ -50,7 +50,7 @@ def pipeline(ticker, interval):
     daily = yahoo.build_daily(load_yahoo(ticker), today=FROZEN_TODAY, now=FROZEN_NOW)
     if interval == "d":
         return daily
-    return quotes.aggregate(daily, interval, FROZEN_TODAY)
+    return aggregate(daily, interval, FROZEN_TODAY)
 
 
 def load_stooq(ticker, interval):

@@ -16,11 +16,11 @@ from pathlib import Path
 
 from support import FROZEN_TODAY, FROZEN_NOW, GPW_CLOSE, warsaw, load_yahoo
 import quotes
-from quotes import calendar_days
 from market_data.adapters import yahoo
 from market_data.adapters.symbol_index import SymbolIndex
 from market_data.adapters.yahoo import YahooQuotes, range_days, range_for_days
-from market_data.model import DateRange
+from market_data.indicators import calendar_days, last_closed
+from market_data.model import DateRange, Instrument
 from market_data.ports import QuoteSourceUnavailableError, Resolution, ResolvedBy, SourceFailure
 
 INDEX = SymbolIndex(quotes.SYMBOLS)
@@ -154,6 +154,25 @@ class TestCache(unittest.TestCase):
         self.assertEqual({b["source"] for b in bars}, {"yahoo"})
 
 
+class TestCacheDefault(unittest.TestCase):
+    """Fail-safe default (was TestCache.test_default_is_always_live_and_writes_nothing): a source
+    built without a cache directory fetches live every time. The 'writes nothing' half is the CLI's
+    wiring (no --cache -> no cache_dir) and has no seam until build_source exists; it returns as
+    build_source(cache=False) in test_cli.py (sim-5ym), which also retires this class."""
+
+    def test_default_is_always_live(self):
+        calls = []
+        def fake_fetch(sym, rng):
+            calls.append((sym, rng)); return load_yahoo("PKN"), None
+        source = YahooQuotes(fetch=fake_fetch, throttle=0, sleep=lambda s: None)
+        end = date.fromisoformat(FROZEN_TODAY)
+        period = DateRange(end - timedelta(days=300), end)
+        instrument = Instrument(key="PKN.PL", isin=None, symbols={"yahoo": "PKN.WA"})
+        source.daily(instrument, period, now=FROZEN_NOW)
+        source.daily(instrument, period, now=FROZEN_NOW)
+        self.assertEqual(len(calls), 2)
+
+
 class TestDaily(unittest.TestCase):
     """The port contract as Yahoo keeps it: bars labelled with their source, a failure to answer
     raised with its raw reason and the resolution made before it, throttling only after real
@@ -265,7 +284,7 @@ class TestSessionClose(unittest.TestCase):
     def test_last_closed_is_todays_candle_after_the_close(self):
         bars = yahoo.build_daily(self.raw(warsaw(2026, 7, 28, GPW_CLOSE)),
                                  now=warsaw(2026, 7, 28, 23 * 3600))
-        self.assertEqual(quotes.last_closed(bars), {"date": "2026-07-28", "c": 144.84})
+        self.assertEqual(last_closed(bars), {"date": "2026-07-28", "c": 144.84})
 
     def _cached(self, write_at, read_at, midday, final):
         """Write the cache at `write_at` from `midday`, read it at `read_at` (live would give `final`).

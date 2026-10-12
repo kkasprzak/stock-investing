@@ -1,55 +1,31 @@
 #!/usr/bin/env python3
-"""Regression tests for quotes.py — deterministic, offline, stdlib-only.
+"""market_data.indicators — aggregation, last close, Wilder ATR, swing lows; Stooq as the oracle.
 
-Run:  python3 -m unittest discover .claude/skills/stock-market-data/tests
-  or: python3 .claude/skills/stock-market-data/tests/test_quotes.py
-Opt-in live check (hits Yahoo): RUN_LIVE_SMOKE=1 python3 -m unittest ...
-
-Determinism: the pipeline depends on live Yahoo + the wall clock (the `complete` flag). Both are
+Deterministic, offline, stdlib-only. Determinism: the pipeline depends on live Yahoo + the wall clock (the `complete` flag). Both are
 frozen — Yahoo responses are captured under fixtures/yahoo_*.json (trimmed ~7 months), and `today` is
 pinned to FROZEN_TODAY. Expected OHLC is anchored to Stooq CSVs (fixtures/stooq_*.csv), the independent
 source we cross-checked by hand. The two known ex-dividend weeks differ from Stooq only on the pre-ex
 Open/High (Stooq back-adjusts; we keep actual-traded) — asserted explicitly, not silently skipped.
 """
 import json, unittest
-from datetime import date, timedelta
+from datetime import date
 
-from support import (FROZEN_TODAY, FROZEN_NOW, TOL, DIVIDEND_WEEKS, load_yahoo, load_stooq,
-                     pipeline)
-import quotes
-from market_data.adapters.yahoo import YahooQuotes
-from market_data.model import DateRange, Instrument
-
-
-class TestCacheDefault(unittest.TestCase):
-    """Fail-safe default (was TestCache.test_default_is_always_live_and_writes_nothing): a source
-    built without a cache directory fetches live every time. The 'writes nothing' half is the CLI's
-    wiring (no --cache -> no cache_dir) and has no seam until build_source exists; it returns as
-    build_source(cache=False) in test_cli.py (sim-5ym), which also retires this class."""
-
-    def test_default_is_always_live(self):
-        calls = []
-        def fake_fetch(sym, rng):
-            calls.append((sym, rng)); return load_yahoo("PKN"), None
-        source = YahooQuotes(fetch=fake_fetch, throttle=0, sleep=lambda s: None)
-        end = date.fromisoformat(FROZEN_TODAY)
-        period = DateRange(end - timedelta(days=300), end)
-        instrument = Instrument(key="PKN.PL", isin=None, symbols={"yahoo": "PKN.WA"})
-        source.daily(instrument, period, now=FROZEN_NOW)
-        source.daily(instrument, period, now=FROZEN_NOW)
-        self.assertEqual(len(calls), 2)
+from support import FROZEN_TODAY, TOL, DIVIDEND_WEEKS, load_stooq, pipeline
+from market_data.indicators import (_period, aggregate, atr_wilder, bars_needed, last_closed,
+                                    swing_lows)
+from quotes import quote_record
 
 
 # --------------------------------------------------------------------------- unit: pure functions
 
 class TestPeriod(unittest.TestCase):
     def test_weekly_monday_and_friday(self):
-        self.assertEqual(quotes._period("2026-07-24", "w"), ("2026-07-20", date(2026, 7, 24)))
-        self.assertEqual(quotes._period("2026-07-20", "w"), ("2026-07-20", date(2026, 7, 24)))
+        self.assertEqual(_period("2026-07-24", "w"), ("2026-07-20", date(2026, 7, 24)))
+        self.assertEqual(_period("2026-07-20", "w"), ("2026-07-20", date(2026, 7, 24)))
 
     def test_monthly_and_year_boundary(self):
-        self.assertEqual(quotes._period("2026-07-15", "m"), ("2026-07-01", date(2026, 7, 31)))
-        self.assertEqual(quotes._period("2026-12-31", "m"), ("2026-12-01", date(2026, 12, 31)))
+        self.assertEqual(_period("2026-07-15", "m"), ("2026-07-01", date(2026, 7, 31)))
+        self.assertEqual(_period("2026-12-31", "m"), ("2026-12-01", date(2026, 12, 31)))
 
 
 class TestAggregate(unittest.TestCase):
@@ -62,16 +38,16 @@ class TestAggregate(unittest.TestCase):
         ]
 
     def test_rollup(self):
-        [b] = quotes.aggregate(self._week(True), "w", "2026-07-25")
+        [b] = aggregate(self._week(True), "w", "2026-07-25")
         self.assertEqual((b["o"], b["h"], b["l"], b["c"], b["v"]), (10.0, 13.0, 8.5, 9.5, 600))
         self.assertEqual(b["date"], "2026-07-20")
 
     def test_complete_after_friday(self):   # weekend: week's Friday < today -> complete
-        [b] = quotes.aggregate(self._week(True), "w", "2026-07-25")
+        [b] = aggregate(self._week(True), "w", "2026-07-25")
         self.assertTrue(b["complete"])
 
     def test_incomplete_midweek(self):      # Wednesday: Friday 07-24 not < today 07-22 -> forming
-        [b] = quotes.aggregate(self._week(False), "w", "2026-07-22")
+        [b] = aggregate(self._week(False), "w", "2026-07-22")
         self.assertFalse(b["complete"])
 
     def _full_week(self, friday_complete):
@@ -84,23 +60,23 @@ class TestAggregate(unittest.TestCase):
 
     def test_week_complete_on_friday_evening(self):
         # Friday after the close: end 07-24 is not < today, but Friday's own bar is closed
-        [b] = quotes.aggregate(self._full_week(True), "w", "2026-07-24")
+        [b] = aggregate(self._full_week(True), "w", "2026-07-24")
         self.assertTrue(b["complete"])
         self.assertEqual(b["c"], 12.0)
 
     def test_week_forming_during_friday_session(self):
-        [b] = quotes.aggregate(self._full_week(False), "w", "2026-07-24")
+        [b] = aggregate(self._full_week(False), "w", "2026-07-24")
         self.assertFalse(b["complete"])
 
     def test_month_complete_on_its_last_session_evening(self):
         days = [{"date": "2026-07-31", "o": 1.0, "h": 2.0, "l": 0.5, "c": 1.5, "v": 10,
                  "complete": True}]
-        [b] = quotes.aggregate(days, "m", "2026-07-31")
+        [b] = aggregate(days, "m", "2026-07-31")
         self.assertTrue(b["complete"])          # month-end reached and that session is closed
 
     def test_monthly_incomplete_midmonth(self):
         days = [{"date": "2026-07-01", "o": 1.0, "h": 2.0, "l": 0.5, "c": 1.5, "v": 10, "complete": True}]
-        [b] = quotes.aggregate(days, "m", "2026-07-25")
+        [b] = aggregate(days, "m", "2026-07-25")
         self.assertFalse(b["complete"])     # month-end 07-31 not < 07-25
 
 
@@ -111,7 +87,7 @@ class TestLastClosed(unittest.TestCase):
             {"date": "2026-07-21", "c": 2.0, "complete": True},
             {"date": "2026-07-22", "c": 3.0, "complete": False},   # forming -> skipped
         ]
-        self.assertEqual(quotes.last_closed(bars), {"date": "2026-07-21", "c": 2.0})
+        self.assertEqual(last_closed(bars), {"date": "2026-07-21", "c": 2.0})
 
 
 # ----------------------------------------------------------- integration: pipeline vs Stooq oracle
@@ -132,7 +108,7 @@ class TestATR(unittest.TestCase):
     ]
 
     def test_hand_computed(self):
-        a = quotes.atr_wilder(self.HAND, 2)
+        a = atr_wilder(self.HAND, 2)
         self.assertEqual(a["value"], 3.5)
         self.assertEqual((a["n"], a["method"], a["bars_used"], a["as_of"]),
                          (2, "wilder", 5, "2026-01-07"))
@@ -141,35 +117,35 @@ class TestATR(unittest.TestCase):
     def test_forming_bar_excluded(self):
         bars = [dict(b) for b in self.HAND]
         bars[-1]["complete"] = False
-        a = quotes.atr_wilder(bars, 2)
+        a = atr_wilder(bars, 2)
         self.assertEqual(a["value"], 2.0)           # the value before the forming bar
         self.assertEqual(a["as_of"], "2026-01-06")
 
     def test_none_when_too_few_candles(self):
-        self.assertIsNone(quotes.atr_wilder(self.HAND, 14))
-        self.assertIsNone(quotes.atr_wilder(self.HAND[:2], 2))   # n+1 = 3 needed
+        self.assertIsNone(atr_wilder(self.HAND, 14))
+        self.assertIsNone(atr_wilder(self.HAND[:2], 2))   # n+1 = 3 needed
 
     def test_short_history_clears_after_the_runup(self):
         long = [dict(self.HAND[i % len(self.HAND)], date=f"2026-02-{i + 1:02d}") for i in range(12)]
-        self.assertFalse(quotes.atr_wilder(long, 2)["short_history"])   # 11 TRs > 5 x 2
+        self.assertFalse(atr_wilder(long, 2)["short_history"])   # 11 TRs > 5 x 2
 
     def test_bars_needed_covers_the_runup(self):
-        self.assertEqual(quotes.bars_needed(6, None), 6)               # no ATR -> caller's ask
-        self.assertEqual(quotes.bars_needed(6, 14), 71)                # 14 x 5 + 1
-        self.assertEqual(quotes.bars_needed(200, 14), 200)             # caller already wants more
+        self.assertEqual(bars_needed(6, None), 6)               # no ATR -> caller's ask
+        self.assertEqual(bars_needed(6, 14), 71)                # 14 x 5 + 1
+        self.assertEqual(bars_needed(200, 14), 200)             # caller already wants more
 
     def test_value_independent_of_returned_slice(self):
         """The regression that matters: a 6-bar morning check and a 70-bar sizing run must read the
         same ATR for the same instrument. Computing it from the returned slice would not."""
         daily = pipeline("PKN", "d")
-        vals = {b: quotes.quote_record(daily, "d", b, FROZEN_TODAY, 14)["atr"]["value"]
+        vals = {b: quote_record(daily, "d", b, FROZEN_TODAY, 14)["atr"]["value"]
                 for b in (6, 20, 70, 150)}
         self.assertEqual(len(set(vals.values())), 1, vals)
         # ...and the test has teeth: the slice-based value really would have differed
-        self.assertNotEqual(quotes.atr_wilder(daily[-20:], 14)["value"], vals[20])
+        self.assertNotEqual(atr_wilder(daily[-20:], 14)["value"], vals[20])
 
     def test_golden_pkn_daily_n14(self):
-        a = quotes.quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_TODAY, 14)["atr"]
+        a = quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_TODAY, 14)["atr"]
         self.assertAlmostEqual(a["value"], 3.5264, places=4)
         self.assertEqual((a["as_of"], a["bars_used"], a["interval"]), ("2026-07-24", 71, "daily"))
         self.assertFalse(a["short_history"])
@@ -177,20 +153,20 @@ class TestATR(unittest.TestCase):
     def test_window_capped_so_a_wider_fetch_cannot_shift_it(self):
         """The other half of the same promise: more history than the run-up must change nothing."""
         daily = pipeline("PKN", "d")                     # 150 complete bars
-        self.assertEqual(quotes.atr_wilder(daily, 14), quotes.atr_wilder(daily[-71:], 14))
-        self.assertEqual(quotes.atr_wilder(daily, 14)["bars_used"], 71)
+        self.assertEqual(atr_wilder(daily, 14), atr_wilder(daily[-71:], 14))
+        self.assertEqual(atr_wilder(daily, 14)["bars_used"], 71)
 
     def test_weekly_runs_on_aggregated_candles(self):
-        a = quotes.quote_record(pipeline("PKN", "d"), "w", 6, FROZEN_TODAY, 14)["atr"]
+        a = quote_record(pipeline("PKN", "d"), "w", 6, FROZEN_TODAY, 14)["atr"]
         self.assertEqual((a["interval"], a["as_of"], a["bars_used"]), ("weekly", "2026-07-20", 32))
         self.assertAlmostEqual(a["value"], 8.8829, places=4)
         self.assertTrue(a["short_history"])         # 31 weekly TRs < 5 x 14 -> flagged, not hidden
 
     def test_absent_unless_asked(self):
-        self.assertNotIn("atr", quotes.quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_TODAY))
+        self.assertNotIn("atr", quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_TODAY))
 
     def test_monthly_fixture_is_too_short_to_report(self):
-        self.assertIsNone(quotes.quote_record(pipeline("PKN", "d"), "m", 6, FROZEN_TODAY, 14)["atr"])
+        self.assertIsNone(quote_record(pipeline("PKN", "d"), "m", 6, FROZEN_TODAY, 14)["atr"])
 
 
 class TestSwingLows(unittest.TestCase):
@@ -207,7 +183,7 @@ class TestSwingLows(unittest.TestCase):
             for i, lo in enumerate([10, 9, 8, 9, 10, 9.5, 7, 8, 9])]
 
     def test_hand_computed_detection(self):
-        s = quotes.swing_lows(self.HAND, 2)
+        s = swing_lows(self.HAND, 2)
         self.assertEqual([(r["date"], r["low_price"]) for r in s["detected"]],
                          [("2026-01-03", 8), ("2026-01-07", 7)])
 
@@ -215,12 +191,12 @@ class TestSwingLows(unittest.TestCase):
         """The rule that keeps a stop off structure price walked through: 9 at index 3 has an 8 on
         its left, 9.5 at index 5 has a 9 on its left. Neither is a swing low, and no number of
         sessions closing after them will change that."""
-        dates = [r["date"] for r in quotes.swing_lows(self.HAND, 2)["detected"]]
+        dates = [r["date"] for r in swing_lows(self.HAND, 2)["detected"]]
         self.assertNotIn("2026-01-04", dates)
         self.assertNotIn("2026-01-06", dates)
 
     def test_derived_fields_carry_what_the_rule_needs(self):
-        first, second = quotes.swing_lows(self.HAND, 2)["detected"]
+        first, second = swing_lows(self.HAND, 2)["detected"]
         # Arrange / Act / Assert — the first row has no predecessor to compare with
         self.assertIsNone(first["higher_than_previous_row_low"])
         self.assertEqual((first["sessions_after_in_window"],
@@ -236,38 +212,38 @@ class TestSwingLows(unittest.TestCase):
         # Lows 10, 9, 8, 9, 10, 8, 11 — one swing low at index 2, retested to the grosz at index 5.
         bars = [{"date": f"2026-02-{i + 1:02d}", "o": lo, "h": lo + 1, "l": lo, "c": lo,
                  "complete": True} for i, lo in enumerate([10, 9, 8, 9, 10, 8, 11])]
-        row, = quotes.swing_lows(bars, 2)["detected"]
+        row, = swing_lows(bars, 2)["detected"]
         self.assertEqual((row["low_price"], row["lowest_low_in_those_sessions"]), (8, 8))
         self.assertFalse(row["undercut_by_later_session"])
 
     def test_detectable_through_lags_the_window_by_the_confirmation(self):
-        s = quotes.swing_lows(self.HAND, 2)
+        s = swing_lows(self.HAND, 2)
         self.assertEqual((s["window_last_session"], s["detectable_through"]),
                          ("2026-01-09", "2026-01-07"))
-        self.assertEqual(quotes.swing_lows(self.HAND, 3)["detectable_through"], "2026-01-06")
+        self.assertEqual(swing_lows(self.HAND, 3)["detectable_through"], "2026-01-06")
 
     def test_forming_bar_excluded(self):
         bars = [dict(b) for b in self.HAND]
         bars[-1]["complete"] = False
-        s = quotes.swing_lows(bars, 2)
+        s = swing_lows(bars, 2)
         self.assertEqual(s["window_last_session"], "2026-01-08")
         self.assertEqual(s["detectable_through"], "2026-01-06")
         self.assertEqual([r["date"] for r in s["detected"]], ["2026-01-03"])   # 7 loses its right side
 
     def test_no_pivot_is_an_empty_list_not_a_missing_key(self):
         rising = [dict(b, l=10 + i, date=f"2026-03-{i + 1:02d}") for i, b in enumerate(self.HAND)]
-        self.assertEqual(quotes.swing_lows(rising, 2)["detected"], [])
+        self.assertEqual(swing_lows(rising, 2)["detected"], [])
 
     def test_window_matches_atr_so_both_describe_one_stretch(self):
         """A stop distance in ATR multiples is measured against these lows; if the two blocks read
         different history, the multiple describes structure the ATR never saw."""
         daily = pipeline("PKN", "d")                     # 150 complete bars
-        rec = quotes.quote_record(daily, "d", 6, FROZEN_TODAY, 14, 2)
+        rec = quote_record(daily, "d", 6, FROZEN_TODAY, 14, 2)
         self.assertEqual(rec["swing_lows"]["window_sessions"], rec["atr"]["bars_used"])
-        self.assertEqual(quotes.swing_lows(daily, 2), quotes.swing_lows(daily[-71:], 2))
+        self.assertEqual(swing_lows(daily, 2), swing_lows(daily[-71:], 2))
 
     def test_result_independent_of_returned_slice(self):
-        recs = {b: quotes.quote_record(pipeline("PKN", "d"), "d", b, FROZEN_TODAY, 14, 2)["swing_lows"]
+        recs = {b: quote_record(pipeline("PKN", "d"), "d", b, FROZEN_TODAY, 14, 2)["swing_lows"]
                 for b in (6, 20, 70, 150)}
         self.assertEqual(len({json.dumps(r, sort_keys=True) for r in recs.values()}), 1)
 
@@ -275,7 +251,7 @@ class TestSwingLows(unittest.TestCase):
         """Regression pin, not an independently verified one — the arithmetic rides on the hand
         tests above. Spot-checkable in the fixture: 144.20 on 2026-07-17 sits under 144.66 / 144.84
         on its left and 144.88 / 146.28 on its right, with five sessions left in the window."""
-        s = quotes.quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_TODAY, 14, 2)["swing_lows"]
+        s = quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_TODAY, 14, 2)["swing_lows"]
         self.assertEqual((s["candle_interval"], s["window_first_session"],
                           s["window_last_session"], s["window_sessions"], s["detectable_through"]),
                          ("daily", "2026-04-15", "2026-07-24", 71, "2026-07-22"))
@@ -286,18 +262,18 @@ class TestSwingLows(unittest.TestCase):
             "undercut_by_later_session": False})
 
     def test_weekly_runs_on_aggregated_candles(self):
-        s = quotes.quote_record(pipeline("PKN", "d"), "w", 6, FROZEN_TODAY, 14, 2)["swing_lows"]
+        s = quote_record(pipeline("PKN", "d"), "w", 6, FROZEN_TODAY, 14, 2)["swing_lows"]
         self.assertEqual(s["candle_interval"], "weekly")
         self.assertLess(s["window_sessions"], 71)        # 150 daily bars aggregate to fewer weeks
 
     def test_absent_unless_asked(self):
         self.assertNotIn("swing_lows",
-                         quotes.quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_TODAY, 14))
+                         quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_TODAY, 14))
 
     def test_bars_needed_covers_the_window_without_atr(self):
-        self.assertEqual(quotes.bars_needed(6, None, None), 6)
-        self.assertEqual(quotes.bars_needed(6, None, 2), 71)     # swings alone still widen the fetch
-        self.assertEqual(quotes.bars_needed(6, 14, 2), 71)
+        self.assertEqual(bars_needed(6, None, None), 6)
+        self.assertEqual(bars_needed(6, None, 2), 71)     # swings alone still widen the fetch
+        self.assertEqual(bars_needed(6, 14, 2), 71)
 
 
 class TestStooqOracle(unittest.TestCase):
@@ -344,7 +320,7 @@ class TestStooqOracle(unittest.TestCase):
             ("LPP", "m"): ("2026-06-01", 18280.0),
         }
         for (ticker, iv), (exp_date, exp_c) in expect.items():
-            lc = quotes.last_closed(pipeline(ticker, iv))
+            lc = last_closed(pipeline(ticker, iv))
             with self.subTest(ticker=ticker, interval=iv):
                 self.assertEqual(lc["date"], exp_date)
                 self.assertAlmostEqual(lc["c"], exp_c, delta=TOL(exp_c))
