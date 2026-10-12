@@ -61,6 +61,10 @@ class TestResolve(unittest.TestCase):
         r = self.resolve("V80A.DE")
         self.assertEqual((r.symbol, r.by), ("V80A.DE", ResolvedBy.SYMBOLS_JSON))
 
+    def test_unmapped_foreign_passthrough(self):   # V80A.DE above is mapped; this hits the fallback
+        r = self.resolve("ZZZ.DE")
+        self.assertEqual((r.symbol, r.by), ("ZZZ.DE", ResolvedBy.SUFFIX_GUESS))
+
 
 class TestRangeFor(unittest.TestCase):
     """#1 — fetch a Yahoo range wide enough to yield the requested bar count (from a daily series).
