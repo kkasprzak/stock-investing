@@ -1,12 +1,12 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-10-12
 decision-makers: Karol Kasprzak
 consulted:
 informed:
 ---
 
-# Candle store is one CSV file per ISIN, versioned in the IKZE repository
+# Candle store is one CSV file per ISIN, versioned in the consumer's repository
 
 ## Context and Problem Statement
 
@@ -31,14 +31,14 @@ The question is: in what form, and where, do we keep the candles?
 
 ## Considered Options
 
-* One CSV file per ISIN, versioned in git in the IKZE repository
+* One CSV file per ISIN, versioned in git in the consumer's repository
 * One JSONL file per ISIN, versioned in git
 * One SQLite file
 * One CSV file for all instruments
 
 ## Decision Outcome
 
-Chosen option: "One CSV file per ISIN, versioned in git in the IKZE repository", because git gives
+Chosen option: "One CSV file per ISIN, versioned in git in the consumer's repository", because git gives
 the history and the audit for free, the diff of one import is small and readable, and a candle is
 a flat row which does not need JSON.
 
@@ -46,7 +46,8 @@ Git is the only history. When an import changes a candle which is already there,
 overwritten and git shows the change. The store itself does not version rows and does not record
 when a row was imported. That is a conscious choice, not an omission.
 
-The store lives in the IKZE repository, the consumer of this data, not in the plugin.
+The store lives in the repository of the consumer of this data (the trading plan's operating log),
+not in the plugin.
 
 ### Consequences
 
@@ -86,5 +87,3 @@ The store lives in the IKZE repository, the consumer of this data, not in the pl
 
 Follows ADR 0000. Come back to this decision if a second consumer of the store appears, or if the
 store has to be shared between machines in a way git does not cover.
-
-Decided while working on issue sim-76h.
