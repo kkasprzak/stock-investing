@@ -41,6 +41,10 @@ Self-describing JSON to stdout: `quotes[<key you passed>]` with `yahoo_symbol`, 
 `resolved_by`, and either `ok:true` + `last_closed {date,c}` + `bars[]`, or `ok:false` + `reason` +
 `value:"[NO DATA]"`.
 
+Every daily bar in `bars[]` carries `source`, the name of the source that supplied it (today always
+`yahoo`); weekly and monthly bars do not. An `ok:true` record gains `unavailable: [{source, reason}]`
+only when some of the sources did not answer — with a single source it never appears.
+
 - `xtb` = the **execution-venue ticker** for this instrument, or `null` when the map has none.
   Reach for it when you keyed by ISIN and need the symbol a state file names. Never guessed: `null`
   means the broker does not list it, so confirm there rather than inferring from the GPW root.
@@ -99,8 +103,9 @@ ticker. Runtime resolves an input `xtb` ticker → entry → `symbols.yahoo`.
 Upkeep:
 - **Add a watched instrument** — one entry: its ISIN → `{name, symbols:{xtb, yahoo}}`. Verify the
   provider symbol live before trusting it.
-- **Add another data provider / broker later** — add its symbol under `symbols` (e.g.
-  `"eodhd": "PKN.WAR"`). Data-only; no code change.
+- **Add another data provider later** — an adapter implementing the `QuoteSource` port
+  (`scripts/market_data/ports.py`), placed in the chain in `quotes.py`, plus its symbol under
+  `symbols` (e.g. `"eodhd": "PKN.WAR"`). A `symbols` entry alone fetches nothing.
 - **A ticker breaks after a rename** — the ISIN is stable; re-resolve that source's symbol via the
   source's own search (for Yahoo: `v1/finance/search?q=<ISIN>`) and update `symbols`. This is why
   blind suffix-swap is unsafe (a rename can move the provider symbol off the broker root).

@@ -11,6 +11,8 @@ Fetches recent completed candles from Yahoo (~15 min delayed) for the given inst
 the shared symbols.json map (broker -> vendor symbol). W1/MN are aggregated from the daily series
 (Yahoo's native weekly/monthly bars split the current period unreliably). Evaluation/monitoring only —
 execution prices come from the execution venue, not here. A price it can't read is "[NO DATA]".
+Layout: this CLI talks to one QuoteSource port (market_data/ports.py), behind which a QuoteChain asks
+its sources in trust order, each an adapter (today only market_data/adapters/yahoo.py).
 """
 from __future__ import annotations
 
