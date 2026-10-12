@@ -61,9 +61,12 @@ by import and asked before Yahoo, which only fills what the store lacks
   whole file is rejected). A row dated today never enters the store; it is skipped and counted.
 - The importer prints a JSON report: `{isin, key, file, added, unchanged, changed, changed_dates[],
   skipped_today, imported: {first, last}}`. `changed` > 0 means sessions already in the store now
-  read differently: check `changed_dates` and the `git diff` before keeping them. Importing the same
-  export again gives `added 0, changed 0` and an unchanged file. Exit 1: the file was rejected
-  (`line N: why` on stderr) and the store was not touched. Exit 2: unknown ticker or bad arguments.
+  read differently: check `changed_dates` and the `git diff` before keeping them. When `added` and
+  `changed` are both 0 the importer writes nothing, so importing the same export again leaves the
+  file as it was; the `--store` directory itself appears only with the first write. Exit 1: the
+  export was rejected (`line N: why` on stderr), is missing, or the store file is unreadable or
+  malformed; the store was not touched. Exit 2: bad arguments (including a missing `--store`, or one
+  still holding a literal `${`), or a ticker with no ISIN in the map; nothing is created.
 - **Committing the store is the user's step**; the importer never runs git. The project's
   `.gitattributes` should carry `data/market-data/*.csv text eol=lf`.
 - Consequences: with a store, a Yahoo outage still gives `ok:true` on the store's bars, and the
