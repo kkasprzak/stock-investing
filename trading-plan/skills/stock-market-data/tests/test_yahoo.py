@@ -14,7 +14,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from support import FROZEN_TODAY, FROZEN_NOW, GPW_CLOSE, warsaw, load_yahoo
+from support import FX, FROZEN_TODAY, FROZEN_NOW, GPW_CLOSE, warsaw, load_yahoo
 import quotes
 from market_data.adapters import yahoo
 from market_data.adapters.symbol_index import SymbolIndex
@@ -181,6 +181,10 @@ class TestDaily(unittest.TestCase):
         self.assertTrue(s.bars)
         self.assertEqual({b["source"] for b in s.bars}, {"yahoo"})
         self.assertEqual(s.resolved, (Resolution("yahoo", "PKN.WA", ResolvedBy.SYMBOLS_JSON),))
+
+    def test_description_is_the_header_text_of_0_4_0(self):    # the output header names the chain
+        with open(os.path.join(FX, "cli_0_4_0_PKN.json")) as f:
+            self.assertEqual(YahooQuotes.description, json.load(f)["source"])
 
     def test_unanswered_fetch_raises_with_raw_reason_and_resolution(self):
         src = self.source(lambda sym, rng: (None, "rate_limited"))

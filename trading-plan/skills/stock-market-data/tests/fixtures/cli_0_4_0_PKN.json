@@ -1,0 +1,178 @@
+{
+  "source": "Yahoo Finance v8 chart (~15 min delayed)",
+  "interval": "daily",
+  "data_note": "Evaluation/monitoring only — NOT execution prices (those come from the execution venue). Bars with complete:false are still forming; drop them for closed-candle decisions. Today's bar flips to complete:true once that venue's regular session has closed, so an evening run reads today's candle as a fact. W1/MN are aggregated from daily.",
+  "quotes": {
+    "PKN.PL": {
+      "yahoo_symbol": "PKN.WA",
+      "xtb": "PKN.PL",
+      "resolved_by": "symbols.json",
+      "ok": true,
+      "last_closed": {
+        "date": "2026-07-24",
+        "c": 156.0
+      },
+      "bars": [
+        {
+          "date": "2026-07-17",
+          "o": 145.86,
+          "h": 147.0,
+          "l": 144.2,
+          "c": 146.2,
+          "v": 2142881,
+          "complete": true,
+          "source": "yahoo"
+        },
+        {
+          "date": "2026-07-20",
+          "o": 147.7,
+          "h": 148.82,
+          "l": 144.88,
+          "c": 146.62,
+          "v": 1636495,
+          "complete": true,
+          "source": "yahoo"
+        },
+        {
+          "date": "2026-07-21",
+          "o": 147.0,
+          "h": 149.16,
+          "l": 146.28,
+          "c": 149.16,
+          "v": 1906019,
+          "complete": true,
+          "source": "yahoo"
+        },
+        {
+          "date": "2026-07-22",
+          "o": 149.16,
+          "h": 152.06,
+          "l": 148.56,
+          "c": 151.88,
+          "v": 1799300,
+          "complete": true,
+          "source": "yahoo"
+        },
+        {
+          "date": "2026-07-23",
+          "o": 152.0,
+          "h": 156.5,
+          "l": 151.92,
+          "c": 155.86,
+          "v": 2460156,
+          "complete": true,
+          "source": "yahoo"
+        },
+        {
+          "date": "2026-07-24",
+          "o": 155.7,
+          "h": 156.3,
+          "l": 153.42,
+          "c": 156.0,
+          "v": 1516341,
+          "complete": true,
+          "source": "yahoo"
+        }
+      ],
+      "atr": {
+        "n": 14,
+        "method": "wilder",
+        "value": 3.5264,
+        "bars_used": 71,
+        "as_of": "2026-07-24",
+        "short_history": false,
+        "interval": "daily"
+      },
+      "swing_lows": {
+        "candle_interval": "daily",
+        "sessions_each_side_with_higher_lows": 2,
+        "window_first_session": "2026-04-15",
+        "window_last_session": "2026-07-24",
+        "window_sessions": 71,
+        "detectable_through": "2026-07-22",
+        "detected": [
+          {
+            "date": "2026-04-17",
+            "low_price": 123.0,
+            "higher_than_previous_row_low": null,
+            "sessions_after_in_window": 68,
+            "lowest_low_in_those_sessions": 121.94,
+            "undercut_by_later_session": true
+          },
+          {
+            "date": "2026-04-27",
+            "low_price": 126.92,
+            "higher_than_previous_row_low": true,
+            "sessions_after_in_window": 62,
+            "lowest_low_in_those_sessions": 121.94,
+            "undercut_by_later_session": true
+          },
+          {
+            "date": "2026-05-15",
+            "low_price": 140.0,
+            "higher_than_previous_row_low": true,
+            "sessions_after_in_window": 49,
+            "lowest_low_in_those_sessions": 121.94,
+            "undercut_by_later_session": true
+          },
+          {
+            "date": "2026-05-22",
+            "low_price": 141.16,
+            "higher_than_previous_row_low": true,
+            "sessions_after_in_window": 44,
+            "lowest_low_in_those_sessions": 121.94,
+            "undercut_by_later_session": true
+          },
+          {
+            "date": "2026-05-27",
+            "low_price": 137.3,
+            "higher_than_previous_row_low": false,
+            "sessions_after_in_window": 41,
+            "lowest_low_in_those_sessions": 121.94,
+            "undercut_by_later_session": true
+          },
+          {
+            "date": "2026-06-05",
+            "low_price": 142.44,
+            "higher_than_previous_row_low": true,
+            "sessions_after_in_window": 35,
+            "lowest_low_in_those_sessions": 121.94,
+            "undercut_by_later_session": true
+          },
+          {
+            "date": "2026-06-18",
+            "low_price": 124.46,
+            "higher_than_previous_row_low": false,
+            "sessions_after_in_window": 26,
+            "lowest_low_in_those_sessions": 121.94,
+            "undercut_by_later_session": true
+          },
+          {
+            "date": "2026-06-24",
+            "low_price": 121.94,
+            "higher_than_previous_row_low": false,
+            "sessions_after_in_window": 22,
+            "lowest_low_in_those_sessions": 122.28,
+            "undercut_by_later_session": false
+          },
+          {
+            "date": "2026-07-07",
+            "low_price": 130.56,
+            "higher_than_previous_row_low": true,
+            "sessions_after_in_window": 13,
+            "lowest_low_in_those_sessions": 135.4,
+            "undercut_by_later_session": false
+          },
+          {
+            "date": "2026-07-17",
+            "low_price": 144.2,
+            "higher_than_previous_row_low": true,
+            "sessions_after_in_window": 5,
+            "lowest_low_in_those_sessions": 144.88,
+            "undercut_by_later_session": false
+          }
+        ]
+      }
+    }
+  }
+}

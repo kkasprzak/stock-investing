@@ -8,8 +8,8 @@ user-invocable: false
 
 The market-data-acquisition layer: fresh **delayed** D1 OHLC for named instruments. Reach for this
 whenever a flow needs recent prices/candles for specific tickers. It returns facts (self-describing
-JSON) — the caller judges. Backend is a market-data provider (currently Yahoo); callers depend on the
-output contract, not the provider.
+JSON) — the caller judges. Backend is a chain of market-data sources asked in trust order; callers
+depend on the output contract, not on which source answered.
 
 ## Run
 
@@ -37,13 +37,20 @@ still be stale by construction — that bar is `complete:false`, so never decide
 
 ## Output contract
 
-Self-describing JSON to stdout: `quotes[<key you passed>]` with `yahoo_symbol`, `xtb`,
-`resolved_by`, and either `ok:true` + `last_closed {date,c}` + `bars[]`, or `ok:false` + `reason` +
-`value:"[NO DATA]"`.
+Self-describing JSON to stdout: a header `source` describing the chain that was asked — each
+source's description, most trusted first, joined by ` > ` — and `quotes[<key you passed>]` with
+`yahoo_symbol`, `xtb`, `resolved_by`, and either `ok:true` + `last_closed {date,c}` + `bars[]`, or
+`ok:false` + `reason` + `unavailable` + `value:"[NO DATA]"`.
 
-Every daily bar in `bars[]` carries `source`, the name of the source that supplied it (today always
-`yahoo`); weekly and monthly bars do not. An `ok:true` record gains `unavailable: [{source, reason}]`
-only when some of the sources did not answer — with a single source it never appears.
+Every daily bar in `bars[]` carries `source`, the name of the source that supplied it: `store` (this
+project's own candle store) or `yahoo`; weekly and monthly bars do not. `unavailable:
+[{source, reason}]` lists the sources that did not answer (`store`, `yahoo`); an `ok:true` record
+carries it only when some source did not answer.
+
+`ok:false` when no source answered, and also when no bars came back while some source did not
+answer. An `ok:false` record always carries the full `unavailable` list; `reason` is Yahoo's entry
+there, else the first one's. A source that answered with nothing is not a failure: no bars and no
+`unavailable` stays `ok:true`.
 
 - `xtb` = the **execution-venue ticker** for this instrument, or `null` when the map has none.
   Reach for it when you keyed by ISIN and need the symbol a state file names. Never guessed: `null`

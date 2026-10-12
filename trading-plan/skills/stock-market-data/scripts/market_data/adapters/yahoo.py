@@ -138,6 +138,7 @@ class YahooQuotes:
     --cache means slower, never stale."""
 
     name = "yahoo"
+    description = DESCRIPTION
 
     def __init__(self, *, fetch=fetch_chart, cache_dir: Path | None = None,
                  throttle: float = THROTTLE, sleep=time.sleep) -> None:
