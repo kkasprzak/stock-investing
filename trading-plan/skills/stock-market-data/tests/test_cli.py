@@ -15,9 +15,8 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from support import FROZEN_TODAY, FROZEN_NOW, FakeSource, load_yahoo
+from support import FX, FROZEN_TODAY, FROZEN_NOW, FakeSource, load_yahoo
 import quotes
-from market_data.adapters import yahoo
 from market_data.adapters.store import StoreQuotes
 from market_data.model import DateRange, Instrument, Isin
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
@@ -95,13 +94,26 @@ class TestMain(unittest.TestCase):
     def test_answered_record(self):
         src = FakeSource(QuoteSeries(BARS, (STORE_PKN, YAHOO_PKN)))
         doc = run(["PKN.PL", "--bars", "3"], src)
-        self.assertEqual(doc["source"], yahoo.DESCRIPTION)
+        self.assertEqual(doc["source"], src.description)      # the header describes the source asked
         self.assertEqual(doc["interval"], "daily")
         rec = doc["quotes"]["PKN.PL"]
         self.assertEqual((rec["yahoo_symbol"], rec["xtb"], rec["resolved_by"], rec["ok"]),
                          ("PKN.WA", "PKN.PL", "symbols.json", True))
         self.assertEqual(rec["bars"], [dict(b) for b in BARS[-3:]])
         self.assertNotIn("unavailable", rec)                # empty -> absent, as today
+
+    def test_with_a_store_the_header_names_it_before_yahoo(self):
+        store_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, store_dir, True)
+
+        def build(cache, *, store_dir=None):
+            return quotes.build_source(cache, store_dir=store_dir,
+                                       fetch=lambda sym, rng: (load_yahoo("PKN"), None),
+                                       sleep=lambda s: None)
+
+        doc = run(["--store", str(store_dir), "PKN.PL"], build=build)
+        self.assertEqual(doc["source"], "own candle store (one CSV per ISIN) > "
+                                        "Yahoo Finance v8 chart (~15 min delayed)")
 
     def test_answered_record_lists_sources_that_did_not_answer(self):
         failures = (SourceFailure("store", "timeout"),)
@@ -197,6 +209,23 @@ class TestMain(unittest.TestCase):
     def test_negative_bars_do_not_crash(self):
         rec = run(["PKN.PL", "--bars", "-5"], FakeSource(QuoteSeries(BARS, (YAHOO_PKN,))))
         self.assertTrue(rec["quotes"]["PKN.PL"]["ok"])
+
+
+class TestOutputPinnedAt040(unittest.TestCase):
+    """Without a store the consumer reads what plugin 0.4.0 printed: header and records byte for byte.
+    fixtures/cli_0_4_0_PKN.json is the 0.4.0 output (commit 2589785) for these arguments, fed by the
+    same Yahoo fixture, minus 'generated' (the wall clock)."""
+
+    ARGV = ["PKN.PL", "--atr", "--swings"]
+
+    def test_header_and_records_match_0_4_0(self):
+        source = quotes.build_source(False, fetch=lambda sym, rng: (load_yahoo("PKN"), None),
+                                     sleep=lambda s: None)
+        doc = run(self.ARGV, source)
+        del doc["generated"]
+        with open(os.path.join(FX, "cli_0_4_0_PKN.json"), encoding="utf-8") as f:
+            pinned = f.read()
+        self.assertEqual(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", pinned)
 
 
 class TestFlagsReachTheCompositionRoot(unittest.TestCase):

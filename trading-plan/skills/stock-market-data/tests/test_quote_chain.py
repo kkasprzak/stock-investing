@@ -29,6 +29,7 @@ class ChainFake:
 
     def __init__(self, name, bars=(), reason=None):
         self.name = name
+        self.description = f"{name} quotes"
         self._bars = tuple(bars)
         self._reason = reason
         self.periods = []
@@ -49,6 +50,13 @@ def ask(*sources):
 class TestQuoteChain(unittest.TestCase):
     def test_is_named_chain(self):
         self.assertEqual(QuoteChain([]).name, "chain")
+
+    def test_description_lists_the_sources_in_trust_order(self):
+        chain = QuoteChain([ChainFake("store"), ChainFake("yahoo")])
+        self.assertEqual(chain.description, "store quotes > yahoo quotes")
+
+    def test_one_source_is_described_by_its_own_text(self):     # no store: the header as in 0.4.0
+        self.assertEqual(QuoteChain([ChainFake("yahoo")]).description, "yahoo quotes")
 
     def test_higher_source_wins_a_shared_date_lower_fills_the_rest(self):
         a = ChainFake("a", [bar("2026-07-22", 10.0, "a"), bar("2026-07-24", 12.0, "a")])

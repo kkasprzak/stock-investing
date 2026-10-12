@@ -14,7 +14,6 @@ from market_data.model import DateRange, Instrument
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 
-DESCRIPTION = "Yahoo Finance v8 chart (~15 min delayed)"
 THROTTLE = 1.5                                  # pause after each live Yahoo request (s)
 
 # Yahoo fetch-range buckets (label, calendar-day span).
@@ -138,7 +137,7 @@ class YahooQuotes:
     --cache means slower, never stale."""
 
     name = "yahoo"
-    description = DESCRIPTION
+    description = "Yahoo Finance v8 chart (~15 min delayed)"
 
     def __init__(self, *, fetch=fetch_chart, cache_dir: Path | None = None,
                  throttle: float = THROTTLE, sleep=time.sleep) -> None:

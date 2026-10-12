@@ -50,6 +50,7 @@ class FakeSource:
     """A QuoteSource giving every instrument the same answer, or raising `error`."""
 
     name = "fake"
+    description = "fake quotes"
 
     def __init__(self, series=None, error=None):
         self._series = series

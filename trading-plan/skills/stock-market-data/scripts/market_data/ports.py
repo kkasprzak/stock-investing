@@ -74,5 +74,6 @@ class QuoteSourceUnavailableError(QuoteSourceError):
 
 class QuoteSource(Protocol):
     name: str
+    description: str            # the text for the output header's `source`
 
     def daily(self, instrument: Instrument, period: DateRange, *, now: float) -> QuoteSeries: ...

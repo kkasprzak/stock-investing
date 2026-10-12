@@ -13,6 +13,7 @@ from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolut
 
 class StoreQuotes:
     name = "store"
+    description = "own candle store (one CSV per ISIN)"
 
     def __init__(self, store_dir: Path) -> None:
         self._dir = Path(store_dir)

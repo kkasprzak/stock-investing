@@ -25,7 +25,6 @@ from pathlib import Path
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)                        # market_data/ sits next to this file (PYTHONSAFEPATH-proof)
 
-from market_data.adapters import yahoo                      # noqa: E402
 from market_data.adapters.store import StoreQuotes          # noqa: E402
 from market_data.adapters.symbol_index import SymbolIndex   # noqa: E402
 from market_data.adapters.yahoo import YahooQuotes, fetch_chart   # noqa: E402
@@ -169,7 +168,7 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
 
     result = {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "source": yahoo.DESCRIPTION,
+        "source": source.description,
         "interval": interval.label,
         "data_note": "Evaluation/monitoring only — NOT execution prices (those come from the execution "
                      "venue). Bars with complete:false are still forming; drop them for closed-candle "
