@@ -18,6 +18,9 @@ SCRIPTS = os.path.join(HERE, "..", "scripts")
 if SCRIPTS not in sys.path:
     sys.path.insert(0, SCRIPTS)
 
+import quotes                                       # noqa: E402  (needs SCRIPTS on sys.path)
+from market_data.adapters import yahoo              # noqa: E402
+
 FROZEN_TODAY = "2026-07-25"          # a Saturday; last session in fixtures is Fri 2026-07-24
 FROZEN_NOW = 1784973600              # that Saturday 12:00 Warsaw — epoch for session-close checks
 GPW_CLOSE = 17 * 3600 + 5 * 60       # WSE regular session ends 17:05 local (per Yahoo's own calendar)
@@ -40,6 +43,14 @@ DIVIDEND_WEEKS = {
 def load_yahoo(ticker):
     with open(os.path.join(FX, f"yahoo_{ticker}.json")) as f:
         return json.load(f)
+
+
+def pipeline(ticker, interval):
+    """Run the offline pipeline for a fixture at FROZEN_TODAY -> list of bars."""
+    daily = yahoo.build_daily(load_yahoo(ticker), today=FROZEN_TODAY, now=FROZEN_NOW)
+    if interval == "d":
+        return daily
+    return quotes.aggregate(daily, interval, FROZEN_TODAY)
 
 
 def load_stooq(ticker, interval):

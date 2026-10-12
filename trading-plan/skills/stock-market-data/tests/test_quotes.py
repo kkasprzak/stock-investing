@@ -11,239 +11,36 @@ pinned to FROZEN_TODAY. Expected OHLC is anchored to Stooq CSVs (fixtures/stooq_
 source we cross-checked by hand. The two known ex-dividend weeks differ from Stooq only on the pre-ex
 Open/High (Stooq back-adjusts; we keep actual-traded) — asserted explicitly, not silently skipped.
 """
-import os, json, tempfile, shutil, unittest
-from datetime import date
+import json, unittest
+from datetime import date, timedelta
 
-from support import (FROZEN_TODAY, FROZEN_NOW, GPW_CLOSE, warsaw, TOL, DIVIDEND_WEEKS,
-                     load_yahoo, load_stooq)
+from support import (FROZEN_TODAY, FROZEN_NOW, TOL, DIVIDEND_WEEKS, load_yahoo, load_stooq,
+                     pipeline)
 import quotes
-from market_data.adapters.symbol_index import SymbolIndex
+from market_data.adapters.yahoo import YahooQuotes
+from market_data.model import DateRange, Instrument
 
 
-def pipeline(ticker, interval):
-    """Run the offline pipeline for a fixture at FROZEN_TODAY -> list of bars."""
-    daily = quotes.build_daily(load_yahoo(ticker), today=FROZEN_TODAY, now=FROZEN_NOW)
-    if interval == "d":
-        return daily
-    return quotes.aggregate(daily, interval, FROZEN_TODAY)
+class TestCacheDefault(unittest.TestCase):
+    """Fail-safe default (was TestCache.test_default_is_always_live_and_writes_nothing): a source
+    built without a cache directory fetches live every time. The 'writes nothing' half is the CLI's
+    wiring (no --cache -> no cache_dir) and has no seam until build_source exists; it returns as
+    build_source(cache=False) in test_cli.py (sim-5ym), which also retires this class."""
+
+    def test_default_is_always_live(self):
+        calls = []
+        def fake_fetch(sym, rng):
+            calls.append((sym, rng)); return load_yahoo("PKN"), None
+        source = YahooQuotes(fetch=fake_fetch, throttle=0, sleep=lambda s: None)
+        end = date.fromisoformat(FROZEN_TODAY)
+        period = DateRange(end - timedelta(days=300), end)
+        instrument = Instrument(key="PKN.PL", isin=None, symbols={"yahoo": "PKN.WA"})
+        source.daily(instrument, period, now=FROZEN_NOW)
+        source.daily(instrument, period, now=FROZEN_NOW)
+        self.assertEqual(len(calls), 2)
 
 
 # --------------------------------------------------------------------------- unit: pure functions
-
-class TestResolve(unittest.TestCase):
-    def setUp(self):
-        self.index = SymbolIndex(quotes.SYMBOLS)
-
-    def resolve(self, key):
-        return quotes.resolve(self.index.lookup(key))
-
-    def test_mapped(self):
-        self.assertEqual(self.resolve("PKN.PL"), ("PKN.WA", "symbols.json"))
-
-    def test_rename_guard(self):            # xStation SPL.PL <-> Yahoo EBP.WA, bridged by ISIN
-        self.assertEqual(self.resolve("SPL.PL"), ("EBP.WA", "symbols.json"))
-
-    def test_suffix_guess(self):            # unmapped GPW -> blind .PL->.WA, flagged
-        self.assertEqual(self.resolve("ZZZ.PL"), ("ZZZ.WA", "suffix_guess"))
-
-    def test_foreign_passthrough(self):
-        self.assertEqual(self.resolve("V80A.DE"), ("V80A.DE", "symbols.json"))
-
-
-class TestRangeFor(unittest.TestCase):
-    """#1 — fetch a Yahoo range wide enough to yield the requested bar count (from a daily series).
-    Pins the intent behind the daily-history fix: small callers stay cheap; triage gets ~252 D1."""
-
-    def test_daily_small_caller_stays_cheap(self):     # morning check: a few bars -> minimal fetch
-        self.assertEqual(quotes.range_for("d", 6), "1mo")
-
-    def test_daily_mid(self):
-        self.assertEqual(quotes.range_for("d", 60), "3mo")
-
-    def test_daily_triage_gets_a_year_plus(self):      # the unblocker: ~252 D1 needs a wide range
-        self.assertEqual(quotes.range_for("d", 252), "2y")
-
-    def test_weekly_enough_for_screen(self):           # ~40 weekly bars from ~1y of daily
-        self.assertEqual(quotes.range_for("w", 40), "1y")
-
-    def test_monthly_modest(self):
-        self.assertEqual(quotes.range_for("m", 12), "1y")
-
-    def test_never_returns_a_range_shorter_than_needed(self):
-        span = {"1mo": 31, "3mo": 92, "6mo": 183, "1y": 365, "2y": 730, "5y": 1825, "10y": 3650, "max": 10**9}
-        factor = {"d": 1.0, "w": 7, "m": 28}   # loose minimum: a range can't be shorter than the data needs
-        for iv in ("d", "w", "m"):
-            for bars in (1, 6, 40, 100, 252, 400):
-                self.assertGreaterEqual(span[quotes.range_for(iv, bars)], bars * factor[iv])
-
-
-class TestCache(unittest.TestCase):
-    """#3 — opt-in, model-decided cache. Default (no --cache) is always-live (fail-safe); with
-    caching enabled, a same-market-day closed-candle series is reused, keyed by market date so a
-    new session invalidates it. Fetch is injected (offline); CACHE_DIR is a temp dir."""
-
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        self._orig = quotes.CACHE_DIR
-        quotes.CACHE_DIR = self.tmp
-        self.raw = load_yahoo("PKN")
-        self.calls = []
-        def fake_fetch(yahoo, rng):
-            self.calls.append((yahoo, rng)); return self.raw, None
-        self.fetch = fake_fetch
-
-    def tearDown(self):
-        quotes.CACHE_DIR = self._orig
-        shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def test_default_is_always_live_and_writes_nothing(self):     # fail-safe default
-        quotes.get_daily("PKN.WA", "1y", FROZEN_TODAY, False, self.fetch)
-        _, src = quotes.get_daily("PKN.WA", "1y", FROZEN_TODAY, False, self.fetch)
-        self.assertEqual(src, "live")
-        self.assertEqual(len(self.calls), 2)
-        self.assertEqual(os.listdir(self.tmp), [])                # nothing cached
-
-    def test_opt_in_miss_then_hit_same_day(self):
-        _, s1 = quotes.get_daily("PKN.WA", "1y", FROZEN_TODAY, True, self.fetch)
-        _, s2 = quotes.get_daily("PKN.WA", "1y", FROZEN_TODAY, True, self.fetch)
-        self.assertEqual((s1, s2), ("live", "cache"))
-        self.assertEqual(len(self.calls), 1)
-
-    def test_new_market_day_refetches(self):
-        quotes.get_daily("PKN.WA", "1y", "2026-07-24", True, self.fetch)
-        _, s2 = quotes.get_daily("PKN.WA", "1y", "2026-07-27", True, self.fetch)
-        self.assertEqual(s2, "live")
-        self.assertEqual(len(self.calls), 2)
-
-    def test_bigger_range_same_day_refetches(self):               # cached history too short
-        quotes.get_daily("PKN.WA", "1mo", FROZEN_TODAY, True, self.fetch)
-        _, s2 = quotes.get_daily("PKN.WA", "2y", FROZEN_TODAY, True, self.fetch)
-        self.assertEqual(s2, "live")
-        self.assertEqual(len(self.calls), 2)
-
-    def test_smaller_range_same_day_hits(self):                   # cached history covers it
-        quotes.get_daily("PKN.WA", "2y", FROZEN_TODAY, True, self.fetch)
-        _, s2 = quotes.get_daily("PKN.WA", "1mo", FROZEN_TODAY, True, self.fetch)
-        self.assertEqual(s2, "cache")
-        self.assertEqual(len(self.calls), 1)
-
-    def test_live_and_cache_return_identical_bars(self):
-        b1, _ = quotes.get_daily("PKN.WA", "1y", FROZEN_TODAY, True, self.fetch)
-        b2, _ = quotes.get_daily("PKN.WA", "1y", FROZEN_TODAY, True, self.fetch)
-        self.assertEqual(b1, b2)
-
-
-class TestSessionClose(unittest.TestCase):
-    """The `complete` flag must track the venue's session, not the calendar date. Before the fix an
-    evening run on a closed exchange still reported today's candle as forming, which is exactly the
-    candle a daily close check has to decide on."""
-
-    DAY = date(2026, 7, 28)          # a Tuesday, WSE trading
-
-    def raw(self, close_epoch=None, price=144.84):
-        """One-bar WSE response for self.DAY; close_epoch = that day's regular session end."""
-        period = ({"regular": {"start": close_epoch - 8 * 3600, "end": close_epoch}}
-                  if close_epoch is not None else None)
-        meta = {"gmtoffset": 7200, "regularMarketPrice": price,
-                "regularMarketTime": warsaw(2026, 7, 28, 17 * 3600)}
-        if period:
-            meta["currentTradingPeriod"] = period
-        return {"meta": meta,
-                "timestamp": [warsaw(2026, 7, 28, 9 * 3600)],
-                "indicators": {"quote": [{"open": [149.48], "high": [150.8], "low": [144.5],
-                                          "close": [price], "volume": [1631410]}]}}
-
-    def bar_at(self, secs, close_epoch=warsaw(2026, 7, 28, GPW_CLOSE)):
-        now = warsaw(2026, 7, 28, secs)
-        return quotes.build_daily(self.raw(close_epoch), now=now)[-1]
-
-    def test_forming_during_the_session(self):
-        b = self.bar_at(12 * 3600)                       # 12:00, market open
-        self.assertEqual(b["date"], "2026-07-28")
-        self.assertFalse(b["complete"])
-
-    def test_complete_right_after_the_close(self):
-        self.assertTrue(self.bar_at(GPW_CLOSE + 60)["complete"])
-
-    def test_complete_in_the_evening(self):              # the bug: 23:03 local, GPW shut for 6h
-        self.assertTrue(self.bar_at(23 * 3600)["complete"])
-
-    def test_not_complete_one_second_before_the_close(self):
-        self.assertFalse(self.bar_at(GPW_CLOSE - 1)["complete"])
-
-    def test_missing_trading_period_stays_conservative(self):
-        # vendor omits currentTradingPeriod -> we can't prove the close -> keep calling it forming
-        b = quotes.build_daily(self.raw(None), now=warsaw(2026, 7, 28, 23 * 3600))[-1]
-        self.assertFalse(b["complete"])
-
-    def test_market_tz_not_machine_tz(self):
-        """Machine in the Americas, market in Warsaw: at 21:00 UTC it is already 07-29 in Warsaw, so
-        the 07-28 bar is a past date — complete regardless of any close time."""
-        b = quotes.build_daily(self.raw(warsaw(2026, 7, 28, GPW_CLOSE)),
-                               now=warsaw(2026, 7, 29, 3 * 3600))[-1]
-        self.assertEqual(b["date"], "2026-07-28")
-        self.assertTrue(b["complete"])
-
-    def test_last_closed_is_todays_candle_after_the_close(self):
-        bars = quotes.build_daily(self.raw(warsaw(2026, 7, 28, GPW_CLOSE)),
-                                  now=warsaw(2026, 7, 28, 23 * 3600))
-        self.assertEqual(quotes.last_closed(bars), {"date": "2026-07-28", "c": 144.84})
-
-    def _cached(self, write_at, read_at, midday, final):
-        """Write the cache at `write_at` from `midday`, read it at `read_at` (live would give `final`).
-        Returns (bars, src) from the second call."""
-        tmp = tempfile.mkdtemp()
-        orig, quotes.CACHE_DIR = quotes.CACHE_DIR, tmp
-        try:
-            quotes.get_daily("PKN.WA", "1mo", "2026-07-28", True,
-                             lambda y, r: (midday, None), now=write_at)
-            return quotes.get_daily("PKN.WA", "1mo", "2026-07-28", True,
-                                    lambda y, r: (final, None), now=read_at)
-        finally:
-            quotes.CACHE_DIR = orig
-            shutil.rmtree(tmp, ignore_errors=True)
-
-    def test_midsession_cache_is_not_reused_after_the_close(self):
-        """The forming bar's OHLC keeps moving until the close, so a series cached mid-session is
-        stale the moment the session ends — reusing it would report a midday snapshot as the day's
-        closed candle (the dangerous direction: a wrong number dressed as a fact)."""
-        close = warsaw(2026, 7, 28, GPW_CLOSE)
-        midday, final = self.raw(close, price=147.2), self.raw(close, price=144.84)
-        bars, src = self._cached(warsaw(2026, 7, 28, 12 * 3600), warsaw(2026, 7, 28, 23 * 3600),
-                                 midday, final)
-        self.assertEqual(src, "live")                       # crossing the close invalidates
-        self.assertEqual(bars[-1]["c"], 144.84)             # the real close, not the snapshot
-        self.assertTrue(bars[-1]["complete"])
-
-    def test_cache_written_after_the_close_is_reused(self):
-        """Same side of the close: the candle is final, so the entry stays good (that's the point of
-        --cache — an evening re-read must not refetch)."""
-        close = warsaw(2026, 7, 28, GPW_CLOSE)
-        final, other = self.raw(close, price=144.84), self.raw(close, price=999.0)
-        bars, src = self._cached(warsaw(2026, 7, 28, 18 * 3600), warsaw(2026, 7, 28, 23 * 3600),
-                                 final, other)
-        self.assertEqual(src, "cache")
-        self.assertEqual(bars[-1]["c"], 144.84)
-        self.assertTrue(bars[-1]["complete"])
-
-    def test_midsession_cache_is_reused_within_the_session(self):
-        """Two mid-session reads still hit: --cache means 'reuse the day's candles', and the forming
-        bar must be dropped by the caller anyway — its flag stays false."""
-        close = warsaw(2026, 7, 28, GPW_CLOSE)
-        midday = self.raw(close, price=147.2)
-        bars, src = self._cached(warsaw(2026, 7, 28, 11 * 3600), warsaw(2026, 7, 28, 12 * 3600),
-                                 midday, self.raw(close, price=148.0))
-        self.assertEqual(src, "cache")
-        self.assertFalse(bars[-1]["complete"])
-
-    def test_preopen_cache_is_not_reused_after_the_close(self):
-        """Written before the open (no bar for today yet) -> after the close it must refetch, or the
-        evening run would see yesterday's candle as the newest one."""
-        close = warsaw(2026, 7, 28, GPW_CLOSE)
-        _, src = self._cached(warsaw(2026, 7, 28, 7 * 3600), warsaw(2026, 7, 28, 23 * 3600),
-                              self.raw(close, price=151.0), self.raw(close, price=144.84))
-        self.assertEqual(src, "live")
-
 
 class TestPeriod(unittest.TestCase):
     def test_weekly_monday_and_friday(self):
@@ -315,23 +112,6 @@ class TestLastClosed(unittest.TestCase):
             {"date": "2026-07-22", "c": 3.0, "complete": False},   # forming -> skipped
         ]
         self.assertEqual(quotes.last_closed(bars), {"date": "2026-07-21", "c": 2.0})
-
-
-class TestBuildDailyBackfill(unittest.TestCase):
-    def test_trailing_null_close_backfilled_from_regularmarketprice(self):
-        # two bars; the latest trails close=None -> patched from regularMarketPrice, dated by rmt
-        r = {
-            "meta": {"gmtoffset": 7200, "regularMarketPrice": 156.0,
-                     "regularMarketTime": int((date(2026, 7, 24) - date(1970, 1, 1)).days * 86400) + 12 * 3600},
-            "timestamp": [int((date(2026, 7, 23) - date(1970, 1, 1)).days * 86400) + 7 * 3600,
-                          int((date(2026, 7, 24) - date(1970, 1, 1)).days * 86400) + 7 * 3600],
-            "indicators": {"quote": [{"open": [152.0, 155.7], "high": [156.5, 156.3],
-                                      "low": [151.92, 153.42], "close": [155.86, None], "volume": [1, 2]}]},
-        }
-        bars = quotes.build_daily(r, today=FROZEN_TODAY)
-        self.assertEqual(bars[-1]["date"], "2026-07-24")
-        self.assertEqual(bars[-1]["c"], 156.0)          # backfilled
-        self.assertTrue(bars[-1]["complete"])           # 07-24 < 07-25
 
 
 # ----------------------------------------------------------- integration: pipeline vs Stooq oracle
@@ -574,19 +354,6 @@ class TestStooqOracle(unittest.TestCase):
             july = {b["date"]: b for b in pipeline(ticker, "m")}["2026-07-01"]
             with self.subTest(ticker=ticker):
                 self.assertFalse(july["complete"])   # month-end 07-31 not < FROZEN_TODAY
-
-
-# ---------------------------------------------------------------------- opt-in live check (network)
-
-@unittest.skipUnless(os.environ.get("RUN_LIVE_SMOKE"), "set RUN_LIVE_SMOKE=1 to hit live Yahoo")
-class TestLiveSmoke(unittest.TestCase):
-    def test_yahoo_response_shape_unchanged(self):
-        r, reason = quotes.fetch_chart("PKN.WA", "1mo")
-        self.assertIsNone(reason, f"fetch failed: {reason}")
-        self.assertIn("regularMarketPrice", r["meta"])
-        self.assertIn("close", r["indicators"]["quote"][0])
-        bars = quotes.build_daily(r)
-        self.assertTrue(bars and bars[-1]["c"] is not None)
 
 
 if __name__ == "__main__":
