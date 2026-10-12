@@ -17,9 +17,10 @@ open = high = low = close = last good close (2026-10-02), volume 0, and was mark
 checks could not see any difference between them and real candles. It was even worse: two times in
 one week a session that looked real in the evening was replaced by a fake candle next morning.
 
-The IKZE operating log uses these numbers. ATR was too low by 13.1% to 23.5%. Stop moves appeared
-which the market structure did not justify. One valid setup (CAR) was rejected without any warning.
-Notes from that week cite close prices which do not exist anymore at the vendor (issue sim-76h).
+The operating log of the trading plan uses these numbers. ATR was too low by 13.1% to 23.5%. Stop
+moves appeared which the market structure did not justify. One valid setup (CAR) was rejected
+without any warning. Notes from that week cite close prices which do not exist anymore at the
+vendor.
 
 The question is: where should the trusted history of daily candles come from?
 
@@ -112,5 +113,3 @@ This decision does not choose the format of the store. It stays open on purpose.
 Come back to this decision when a predictable, stable data source with an API is available for
 free or for small money, for example from my broker. It can become one more way to fill the store,
 or a reason to change this decision.
-
-Decided while working on issue sim-76h.
