@@ -47,8 +47,8 @@ MIN_PERIOD_DAYS = 9                             # the port's promise: an empty a
                                                 # (below Yahoo's smallest bucket, 1mo, so no fetch changes)
 
 
-def build_source(cache: bool, *, cache_dir: Path = CACHE_DIR, fetch=fetch_chart,
-                 sleep=time.sleep) -> QuoteSource:
+def build_source(cache: bool, *, store_dir: Path | None = None, cache_dir: Path = CACHE_DIR,
+                 fetch=fetch_chart, sleep=time.sleep) -> QuoteSource:
     """The composition root: which sources answer, in which order. `fetch` and `sleep` are injectable
     so tests run offline and unthrottled."""
     # no --cache = no cache: fail-safe (a forgotten flag means slower, never stale)
@@ -84,7 +84,33 @@ def _yahoo_fields(resolved):
     return (res.symbol, res.by.value) if res else (None, None)
 
 
-def main(argv=None, source: QuoteSource | None = None):
+def _unavailable(failures):
+    return [{"source": f.source, "reason": f.reason} for f in failures]
+
+
+def _no_data(xtb, resolved, failures):
+    """The one ok:false record, whether no source answered or the ones that did had no bars.
+    `reason` is Yahoo's when Yahoo failed (the output contract names it), else the first failure's;
+    `unavailable` always lists every failure."""
+    symbol, by = _yahoo_fields(resolved)
+    failure = _from_yahoo(failures) or next(iter(failures), None)
+    return {"yahoo_symbol": symbol, "xtb": xtb, "resolved_by": by, "ok": False,
+            "reason": failure.reason if failure else None, "value": "[NO DATA]",
+            "unavailable": _unavailable(failures)}
+
+
+def _store_dir(text: str) -> Path:
+    """--store as given, never touched here. A literal `${` is a skill variable Claude Code did not
+    substitute: reading it as a path would turn a broken setup into an innocent store not_found."""
+    if "${" in text:
+        raise argparse.ArgumentTypeError(
+            f"{text!r} holds a variable that was not substituted (literal '${{'); pass the "
+            f"project's real path, e.g. --store /path/to/project/data/market-data")
+    return Path(text)
+
+
+def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
+         today: date | None = None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("tickers", nargs="+", metavar="TICKER", help="broker tickers, e.g. PKN.PL ALE.PL")
     ap.add_argument("--interval", choices=("d", "w", "m"), default="d",
@@ -103,11 +129,13 @@ def main(argv=None, source: QuoteSource | None = None):
     ap.add_argument("--cache", action="store_true",
                     help="reuse the same market day's closed candles from an on-disk cache; omit when "
                          "the moment needs live data")
+    ap.add_argument("--store", type=_store_dir, default=None, metavar="DIR",
+                    help="this project's own candle store, one CSV per ISIN; asked before Yahoo")
     args = ap.parse_args(argv)
 
     index = SymbolIndex(SYMBOLS)
     interval = Interval(args.interval)
-    end = date.today()
+    end = today or date.today()
     today = end.isoformat()
     # --bars <= 0 never failed and must not now: DateRange would reject an inverted range.
     days = min(max(calendar_days(interval, bars_needed(max(args.bars, 1), args.atr, args.swings)),
@@ -115,7 +143,7 @@ def main(argv=None, source: QuoteSource | None = None):
                MAX_PERIOD_DAYS)
     period = DateRange(end - timedelta(days=days), end)
     if source is None:
-        source = build_source(args.cache)
+        source = build(args.cache, store_dir=args.store)
     quotes = {}
     for tk in args.tickers:
         instrument = index.lookup(tk)
@@ -123,18 +151,17 @@ def main(argv=None, source: QuoteSource | None = None):
         try:
             series = source.daily(instrument, period, now=time.time())
         except QuoteSourceUnavailableError as e:
-            symbol, by = _yahoo_fields(e.resolved)
-            failure = _from_yahoo(e.failures)
-            quotes[tk] = {"yahoo_symbol": symbol, "xtb": xtb, "resolved_by": by, "ok": False,
-                          "reason": failure.reason if failure else None, "value": "[NO DATA]"}
+            quotes[tk] = _no_data(xtb, e.resolved, e.failures)
+            continue
+        if not series.bars and series.unavailable:  # no bars, and a source that might have had them failed
+            quotes[tk] = _no_data(xtb, series.resolved, series.unavailable)
             continue
         symbol, by = _yahoo_fields(series.resolved)
         quotes[tk] = {"yahoo_symbol": symbol, "xtb": xtb, "resolved_by": by, "ok": True,
                       **quote_record(list(series.bars), interval, args.bars, today, args.atr,
                                      args.swings)}
         if series.unavailable:                      # only when some source did not answer
-            quotes[tk]["unavailable"] = [{"source": f.source, "reason": f.reason}
-                                         for f in series.unavailable]
+            quotes[tk]["unavailable"] = _unavailable(series.unavailable)
 
     result = {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
