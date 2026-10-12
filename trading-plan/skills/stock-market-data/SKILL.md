@@ -58,9 +58,10 @@ by import and asked before Yahoo, which only fills what the store lacks
   dividends), taken **after the session has closed**: the import contract is complete data of closed
   sessions only, and the importer does not know the exchange calendar, so it cannot rescue an export
   taken mid-session. History from 2022 is enough (Stooq's older history has fractional volume and the
-  whole file is rejected). A row dated today never enters the store; it is skipped and counted.
+  whole file is rejected). A row dated today is imported: Stooq's daily export lists closed
+  sessions only. A row dated after today rejects the whole file.
 - The importer prints a JSON report: `{isin, key, file, added, unchanged, changed, changed_dates[],
-  skipped_today, imported: {first, last}}`. `changed` > 0 means sessions already in the store now
+  imported: {first, last}}`. `changed` > 0 means sessions already in the store now
   read differently: check `changed_dates` and the `git diff` before keeping them. When `added` and
   `changed` are both 0 the importer writes nothing, so importing the same export again leaves the
   file as it was; the `--store` directory itself appears only with the first write. Exit 1: the

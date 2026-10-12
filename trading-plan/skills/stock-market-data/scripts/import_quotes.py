@@ -4,9 +4,9 @@
   python3 import_quotes.py --store DIR stooq <export.csv> --for PEO.PL
 
 The write side of the store (quotes.py only reads it). One file per ISIN, <ISIN>.csv under --store;
-the instrument is named with --for, a broker ticker or an ISIN from symbols.json. Import closed
-sessions only: a row dated today is skipped and counted, a later one rejects the file. The first
-problem rejects the whole file and leaves the store untouched. Prints a JSON report of what was
+the instrument is named with --for, a broker ticker or an ISIN from symbols.json. A row in a daily
+export is a closed session, so a row dated today is imported; one dated after today rejects the
+file. The first problem rejects the whole file and leaves the store untouched. Prints a JSON report of what was
 added and what changed; committing the store is the user's step (git diff is the review).
 Never fetches quotes and never runs git.
 """
@@ -68,13 +68,12 @@ def main(argv=None, *, today: date | None = None) -> int:
     for i, r in enumerate(rows):
         if r.quote.session > today:
             return _rejected(f"{args.export}: line {i + 2}: session {r.quote.session} is after "
-                             f"today {today}; import closed sessions only")
-    incoming = [r for r in rows if r.quote.session < today]
-    skipped_today = len(rows) - len(incoming)
+                             f"today {today}")
+    # A row in a daily export is a closed session, today's included.
+    incoming = rows
 
     report = {"isin": str(instrument.isin), "key": args.key, "file": str(path),
               "added": 0, "unchanged": 0, "changed": 0, "changed_dates": [],
-              "skipped_today": skipped_today,
               "imported": {"first": incoming[0].quote.session.isoformat() if incoming else None,
                            "last": incoming[-1].quote.session.isoformat() if incoming else None}}
     if incoming:

@@ -70,7 +70,7 @@ sleep. `quotes.main(argv, source=, build=, today=)` and `build_source(cache, sto
 cache_dir=..., fetch=..., sleep=...)` take the same injections, so the CLI is tested without the
 network and without touching the real cache. The store is a directory on disk: the
 `fixtures/store/` directory, or a temp one; `import_quotes.main(argv, today=)` takes the date, so
-"closed sessions only" does not follow the clock.
+"no session after today" does not follow the clock.
 
 ## How it stays deterministic
 
@@ -120,8 +120,8 @@ values; the tests re-assert them on every run.
   and every rejection; on the real exports, a guard that every noisy PEO price sits within the snap
   radius, and ATR pins (PEO 7.52 agrees with the 2026-10-10 hand computation; ALE is a regression
   pin). `main()` on a temp store: the first import creates the store, the same export twice changes
-  nothing (same bytes), a changed close is reported with its date, today's row is skipped and
-  counted. Exit 1, store untouched: a session after today, a bad row (the stored file stays byte for
+  nothing (same bytes), a changed close is reported with its date, today's row is imported, a
+  header-only export writes nothing. Exit 1, store untouched: a session after today, a bad row (the stored file stays byte for
   byte), a broken store file (not overwritten), a missing export. Exit 2: a missing `--store`, an
   unknown ticker, a literal `${` in `--store`.
 - **CLI** (`test_cli.py`) — `build_source` without a cache writes nothing, with one writes one

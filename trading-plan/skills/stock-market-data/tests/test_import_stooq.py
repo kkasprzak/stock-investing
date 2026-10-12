@@ -1,7 +1,7 @@
 """market_data/importers/stooq.py and scripts/import_quotes.py — a Stooq export into the store.
 
 Offline, no mocks: exports are fixtures or files written to a temp directory, the store is a temp
-directory, and main() takes `today` so the "closed sessions only" rule does not follow the clock.
+directory, and main() takes `today` so the "no session after today" rule does not follow the clock.
 """
 from __future__ import annotations
 
@@ -258,7 +258,6 @@ class TestImport(TempDir):
         path = self.store / "LU2237380790.csv"
         self.assertEqual(report, {"isin": "LU2237380790", "key": "ALE.PL", "file": str(path),
                                   "added": 114, "unchanged": 0, "changed": 0, "changed_dates": [],
-                                  "skipped_today": 0,
                                   "imported": {"first": "2026-05-04", "last": "2026-10-09"}})
         self.assertTrue(path.read_bytes().startswith(b"date,open,high,low,close,volume,source\n"
                                                      b"2026-05-04,30,30.35,29.685,29.82,2488061,"
@@ -289,17 +288,18 @@ class TestImport(TempDir):
                          (0, 1, ["2026-07-07"], 2))
         self.assertEqual(self.read_store()[-1][4], "133.2")
 
-    def test_todays_session_is_skipped_and_counted(self):
+    def test_todays_session_is_imported(self):
+        # A row in Stooq's daily export is a closed session, today's included.
         code, report, _ = self.run_import(self.export(PKN_EXPORT), today=date(2026, 7, 7))
-        self.assertEqual((code, report["added"], report["skipped_today"]), (0, 2, 1))
-        self.assertEqual(report["imported"], {"first": "2026-07-03", "last": "2026-07-06"})
-        self.assertEqual([r[0] for r in self.read_store()], ["2026-07-03", "2026-07-06"])
+        self.assertEqual((code, report["added"]), (0, 3))
+        self.assertEqual(report["imported"], {"first": "2026-07-03", "last": "2026-07-07"})
+        self.assertEqual([r[0] for r in self.read_store()],
+                         ["2026-07-03", "2026-07-06", "2026-07-07"])
 
-    def test_only_todays_session_writes_nothing(self):
-        code, report, _ = self.run_import(
-            self.export(PL_HEADER + "2026-07-08,133,135,132.5,134.1,1\n"))
-        self.assertEqual((code, report["added"], report["skipped_today"], report["imported"]),
-                         (0, 0, 1, {"first": None, "last": None}))
+    def test_a_header_only_export_writes_nothing(self):
+        code, report, _ = self.run_import(self.export(PL_HEADER))
+        self.assertEqual((code, report["added"], report["imported"]),
+                         (0, 0, {"first": None, "last": None}))
         self.assertFalse(self.store.exists())
 
     def test_a_session_after_today_rejects_the_file(self):
