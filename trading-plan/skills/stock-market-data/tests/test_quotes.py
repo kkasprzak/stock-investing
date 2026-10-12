@@ -11,56 +11,13 @@ pinned to FROZEN_TODAY. Expected OHLC is anchored to Stooq CSVs (fixtures/stooq_
 source we cross-checked by hand. The two known ex-dividend weeks differ from Stooq only on the pre-ex
 Open/High (Stooq back-adjusts; we keep actual-traded) — asserted explicitly, not silently skipped.
 """
-import os, sys, csv, json, tempfile, shutil, unittest
-from datetime import date, timedelta
+import os, json, tempfile, shutil, unittest
+from datetime import date
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-FX = os.path.join(HERE, "fixtures")
-sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
-import quotes  # noqa: E402
-
-FROZEN_TODAY = "2026-07-25"          # a Saturday; last session in fixtures is Fri 2026-07-24
-FROZEN_NOW = 1784973600              # that Saturday 12:00 Warsaw — epoch for session-close checks
-GPW_CLOSE = 17 * 3600 + 5 * 60       # WSE regular session ends 17:05 local (per Yahoo's own calendar)
-
-
-def warsaw(y, m, d, secs):
-    """Epoch for a Warsaw wall-clock moment (CEST, +2h) — session-boundary fixtures."""
-    return (date(y, m, d) - date(1970, 1, 1)).days * 86400 + secs - 7200
-
-TOL = lambda v: max(0.01, 0.0005 * abs(v))   # noqa: E731  price tolerance (rounding)
-
-# Ex-dividend weeks: Stooq back-adjusts the pre-ex Open/High; we keep actual-traded (unadjusted).
-# (ticker, interval, period_label) -> known unadjusted Open we must still report.
-DIVIDEND_WEEKS = {
-    ("PKN", "w", "2026-06-15"): 146.0,   # PKN ex-div 2026-06-17 (8.00)
-    ("KGH", "w", "2026-06-22"): 375.0,   # KGH ex-div 2026-06-24 (1.50)
-}
-
-
-def load_yahoo(ticker):
-    with open(os.path.join(FX, f"yahoo_{ticker}.json")) as f:
-        return json.load(f)
-
-
-def load_stooq(ticker, interval):
-    """{our_date_label: {o,h,l,c}} from a Stooq CSV, aligned to our labels:
-    daily = same date; weekly Sunday -> that week's Monday; monthly month-end -> 1st."""
-    path = os.path.join(FX, f"stooq_{ticker.lower()}_{interval}.csv")
-    out = {}
-    with open(path) as f:
-        rows = list(csv.DictReader(f))
-    for row in rows:
-        d = date.fromisoformat(row["Data"])
-        if interval == "d":
-            key = d.isoformat()
-        elif interval == "w":
-            key = (d - timedelta(days=6)).isoformat()
-        else:
-            key = f"{d.year}-{d.month:02d}-01"
-        out[key] = {"o": float(row["Otwarcie"]), "h": float(row["Najwyzszy"]),
-                    "l": float(row["Najnizszy"]), "c": float(row["Zamkniecie"])}
-    return out
+from support import (FROZEN_TODAY, FROZEN_NOW, GPW_CLOSE, warsaw, TOL, DIVIDEND_WEEKS,
+                     load_yahoo, load_stooq)
+import quotes
+from market_data.adapters.symbol_index import SymbolIndex
 
 
 def pipeline(ticker, interval):
@@ -75,41 +32,22 @@ def pipeline(ticker, interval):
 
 class TestResolve(unittest.TestCase):
     def setUp(self):
-        self.idx = quotes.load_index()
+        self.index = SymbolIndex(quotes.SYMBOLS)
+
+    def resolve(self, key):
+        return quotes.resolve(self.index.lookup(key))
 
     def test_mapped(self):
-        self.assertEqual(quotes.resolve("PKN.PL", self.idx), ("PKN.WA", "symbols.json"))
+        self.assertEqual(self.resolve("PKN.PL"), ("PKN.WA", "symbols.json"))
 
     def test_rename_guard(self):            # xStation SPL.PL <-> Yahoo EBP.WA, bridged by ISIN
-        self.assertEqual(quotes.resolve("SPL.PL", self.idx), ("EBP.WA", "symbols.json"))
+        self.assertEqual(self.resolve("SPL.PL"), ("EBP.WA", "symbols.json"))
 
     def test_suffix_guess(self):            # unmapped GPW -> blind .PL->.WA, flagged
-        self.assertEqual(quotes.resolve("ZZZ.PL", self.idx), ("ZZZ.WA", "suffix_guess"))
+        self.assertEqual(self.resolve("ZZZ.PL"), ("ZZZ.WA", "suffix_guess"))
 
     def test_foreign_passthrough(self):
-        self.assertEqual(quotes.resolve("V80A.DE", self.idx), ("V80A.DE", "symbols.json"))
-
-
-class TestBrokerSymbol(unittest.TestCase):
-    """The execution-venue ticker a caller needs to name a state-file row. Never guessed."""
-
-    def setUp(self):
-        self.idx = quotes.load_index()
-
-    def test_by_isin(self):                 # sourcing keys by ISIN, writes the broker ticker
-        self.assertEqual(quotes.broker_symbol("PLPKN0000018", self.idx), "PKN.PL")
-
-    def test_by_broker_ticker(self):        # already a broker ticker -> itself
-        self.assertEqual(quotes.broker_symbol("PKN.PL", self.idx), "PKN.PL")
-
-    def test_rename_guard(self):            # broker keeps the old root; Yahoo moved off it
-        self.assertEqual(quotes.broker_symbol("PLCCC0000016", self.idx), "CCC.PL")
-
-    def test_unlisted_is_none(self):        # mapped instrument the broker does not offer
-        self.assertIsNone(quotes.broker_symbol("PLROBYG00321", self.idx))
-
-    def test_unmapped_is_none(self):        # never inferred from the GPW root
-        self.assertIsNone(quotes.broker_symbol("ZZZ.PL", self.idx))
+        self.assertEqual(self.resolve("V80A.DE"), ("V80A.DE", "symbols.json"))
 
 
 class TestRangeFor(unittest.TestCase):

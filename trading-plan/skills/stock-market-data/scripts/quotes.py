@@ -12,11 +12,19 @@ the shared symbols.json map (broker -> vendor symbol). W1/MN are aggregated from
 (Yahoo's native weekly/monthly bars split the current period unreliably). Evaluation/monitoring only —
 execution prices come from the execution venue, not here. A price it can't read is "[NO DATA]".
 """
+from __future__ import annotations
+
 import sys, os, json, time, argparse, tempfile, urllib.request, urllib.error
 from datetime import datetime, timezone, date, timedelta
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SYMBOLS = os.path.join(HERE, "symbols.json")   # the shared symbol map (self-contained)
+sys.path.insert(0, HERE)                        # market_data/ sits next to this file (PYTHONSAFEPATH-proof)
+
+from market_data.adapters.symbol_index import SymbolIndex  # noqa: E402
+from market_data.model import Instrument, Interval         # noqa: E402
+
+SYMBOLS = Path(HERE) / "symbols.json"           # the shared symbol map (self-contained)
 # Opt-in on-disk cache of daily series, OUTSIDE the skill (keeps the distributable artifact pure).
 # Default: `.cache/stock-market-data` under the project that launched the skill (CLAUDE_PROJECT_DIR);
 # override with STOCK_MARKET_DATA_CACHE; fall back to the system temp dir when run outside a project.
@@ -26,22 +34,21 @@ CACHE_DIR = (os.environ.get("STOCK_MARKET_DATA_CACHE")
                  else os.path.join(tempfile.gettempdir(), "stock-market-data")))
 THROTTLE = 1.5                                  # pause between Yahoo requests (s)
 DEFAULT_BARS = 6                                # bars returned per symbol
-INTERVAL_LABEL = {"d": "daily", "w": "weekly", "m": "monthly"}
 ATR_DEFAULT_N = 14                              # Wilder's default lookback
 ATR_WARMUP = 5                                  # x n candles of run-up before ATR is settled
 SWING_SESSIONS_DEFAULT = 2                      # sessions each side that must have a higher low
 
-# Yahoo fetch-range buckets (label, calendar-day span) and per-interval calendar headroom per bar.
-# W1/MN are aggregated from the daily series, so every interval maps onto daily calendar days.
+# Yahoo fetch-range buckets (label, calendar-day span). The per-interval calendar headroom per bar
+# is Interval.calendar_factor.
 _RANGE_BUCKETS = [("1mo", 31), ("3mo", 92), ("6mo", 183), ("1y", 365),
                   ("2y", 730), ("5y", 1825), ("10y", 3650)]
-_RANGE_FACTOR = {"d": 1.5, "w": 7, "m": 30}     # daily: ~1.5 calendar days per trading day
 
 
 def range_for(interval, bars):
     """Smallest Yahoo range whose span covers `bars` candles of `interval`. Keeps small callers
     (e.g. a 6-bar morning check) cheap while letting triage pull ~252 daily bars."""
-    needed = bars * _RANGE_FACTOR[interval]
+    interval = Interval(interval)
+    needed = bars * interval.calendar_factor
     for label, span in _RANGE_BUCKETS:
         if span >= needed:
             return label
@@ -56,38 +63,16 @@ def _range_days(label):
     return 10 ** 9
 
 
-def load_index():
-    """Return {lookup_key: entry}, keyed by both ISIN and xtb ticker. entry = {isin, name,
-    symbols:{source: ticker}}. Callers keyed by broker ticker (state files) hit the xtb key;
-    callers keyed by ISIN (e.g. index-membership sourcing) hit the ISIN key — no suffix guess."""
-    with open(SYMBOLS) as f:
-        data = json.load(f)
-    idx = {}
-    for isin, e in data["instruments"].items():
-        entry = {"isin": isin, **e}
-        idx[isin] = entry                          # resolve by ISIN (durable, rename-proof)
-        xtb = e.get("symbols", {}).get("xtb")
-        if xtb:
-            idx[xtb] = entry                       # and by broker ticker (state-file anchor)
-    return idx
-
-
-def resolve(ticker, idx):
-    """(yahoo_symbol, resolved_by). Map by xtb ticker; else suffix-swap .PL->.WA, flagged as a guess.
-    Source name ('yahoo') is a parameter here so adding vendors stays data-only."""
-    e = idx.get(ticker)
-    if e and e.get("symbols", {}).get("yahoo"):
-        return e["symbols"]["yahoo"], "symbols.json"
-    if ticker.endswith(".PL"):                     # GPW: broker .PL -> Yahoo .WA
-        return ticker[:-3] + ".WA", "suffix_guess"
-    return ticker, "suffix_guess"                  # foreign (.DE/.US/...) already Yahoo-shaped
-
-
-def broker_symbol(ticker, idx):
-    """The execution-venue ticker for this instrument, or None when the map has none. Callers keyed
-    by ISIN (index-membership sourcing) need it to name a state-file row. Never guessed: an
-    instrument the broker does not list must be confirmed there, not inferred from the GPW root."""
-    return (idx.get(ticker) or {}).get("symbols", {}).get("xtb")
+def resolve(instrument: Instrument):
+    """(yahoo_symbol, resolved_by). The map's yahoo symbol; else suffix-swap the caller's key
+    .PL->.WA, flagged as a guess."""
+    yahoo = instrument.symbols.get("yahoo")
+    if yahoo:
+        return yahoo, "symbols.json"
+    key = instrument.key
+    if key.endswith(".PL"):                        # GPW: broker .PL -> Yahoo .WA
+        return key[:-3] + ".WA", "suffix_guess"
+    return key, "suffix_guess"                     # foreign (.DE/.US/...) already Yahoo-shaped
 
 
 def fetch_chart(yahoo, rng, tries=4):
@@ -231,8 +216,9 @@ def get_daily(yahoo, rng, today, use_cache=False, fetch=None, now=None):
 def _period(date_str, interval):
     """(label, period_end) for a daily date grouped weekly/monthly.
     label = period start (Monday / 1st); period_end = last business/calendar day (Friday / month-end)."""
+    interval = Interval(interval)
     d = date.fromisoformat(date_str)
-    if interval == "w":
+    if interval is Interval.WEEKLY:
         monday = d - timedelta(days=d.weekday())
         return monday.isoformat(), monday + timedelta(days=4)          # Mon .. Fri
     nxt = date(d.year + 1, 1, 1) if d.month == 12 else date(d.year, d.month + 1, 1)
@@ -244,6 +230,7 @@ def aggregate(daily, interval, today):
     extremes, c = last day's close, v = summed volume. A period is complete iff its last business/
     calendar day is before today, or that day has been reached and its own daily bar is already closed
     — so a week reads complete on Friday evening, not only on Saturday."""
+    interval = Interval(interval)
     today_d = date.fromisoformat(today)
     newest = date.fromisoformat(daily[-1]["date"]) if daily else None
     order, groups = [], {}
@@ -364,13 +351,14 @@ def quote_record(daily, interval, bars, today, atr_n=None, swings=None):
     """The per-symbol payload: the last `bars` candles of `interval`, their last closed one, and
     optionally ATR and the swing lows. Both derived blocks are computed over the **whole** fetched
     series, not the returned slice — see bars_needed()."""
-    series = daily if interval == "d" else aggregate(daily, interval, today)
+    interval = Interval(interval)
+    series = daily if interval is Interval.DAILY else aggregate(daily, interval, today)
     shown = series[-bars:]
     rec = {"last_closed": last_closed(shown), "bars": shown}
     if atr_n:
-        rec["atr"] = atr_wilder(series, atr_n, INTERVAL_LABEL[interval])
+        rec["atr"] = atr_wilder(series, atr_n, interval.label)
     if swings:
-        rec["swing_lows"] = swing_lows(series, swings, INTERVAL_LABEL[interval], atr_n)
+        rec["swing_lows"] = swing_lows(series, swings, interval.label, atr_n)
     return rec
 
 
@@ -403,13 +391,15 @@ def main():
                          "the moment needs live data")
     args = ap.parse_args()
 
-    idx = load_index()
+    index = SymbolIndex(SYMBOLS)
+    interval = Interval(args.interval)
     today = date.today().isoformat()
-    rng = range_for(args.interval, bars_needed(args.bars, args.atr, args.swings))
+    rng = range_for(interval, bars_needed(args.bars, args.atr, args.swings))
     quotes = {}
     for tk in args.tickers:
-        yahoo, how = resolve(tk, idx)
-        xtb = broker_symbol(tk, idx)
+        instrument = index.lookup(tk)
+        yahoo, how = resolve(instrument)
+        xtb = instrument.symbols.get("xtb")
         daily, src = get_daily(yahoo, rng, today, use_cache=args.cache)
         if daily is None:
             quotes[tk] = {"yahoo_symbol": yahoo, "xtb": xtb, "resolved_by": how, "ok": False,
@@ -418,12 +408,12 @@ def main():
         if src == "live":
             time.sleep(THROTTLE)                        # throttle real fetches only
         quotes[tk] = {"yahoo_symbol": yahoo, "xtb": xtb, "resolved_by": how, "ok": True,
-                      **quote_record(daily, args.interval, args.bars, today, args.atr, args.swings)}
+                      **quote_record(daily, interval, args.bars, today, args.atr, args.swings)}
 
     result = {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "Yahoo Finance v8 chart (~15 min delayed)",
-        "interval": INTERVAL_LABEL[args.interval],
+        "interval": interval.label,
         "data_note": "Evaluation/monitoring only — NOT execution prices (those come from the execution "
                      "venue). Bars with complete:false are still forming; drop them for closed-candle "
                      "decisions. Today's bar flips to complete:true once that venue's regular session "
