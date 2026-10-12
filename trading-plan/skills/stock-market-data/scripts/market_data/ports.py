@@ -8,9 +8,11 @@ Semantics every adapter keeps:
   range bucket). Callers trim: the indicators read a fixed window anyway, the CLI cuts to --bars.
 - **An empty tuple of bars means the source answered and has nothing for this instrument in this
   period** (e.g. a store that does not know the instrument). That is not a failure and does not
-  raise. The period always spans at least nine calendar days, so empty never means "weekend".
-- An exception only when the source **did not answer** (timeout, HTTP error, exception, the vendor's
-  not_found). That distinction is the point of the port.
+  raise. Callers ask for at least nine calendar days (the CLI enforces MIN_PERIOD_DAYS), so empty
+  never means "weekend"; adapters do not check it.
+- QuoteSourceUnavailableError only when the source **did not answer** (timeout, HTTP error, the
+  vendor's not_found); the adapter translates those itself. That distinction is the point of the
+  port. Any other exception is a bug, not an answer: it is not caught and ends the run.
 - `now` (epoch) is injected: the adapter decides each bar's `complete` flag in the market's own
   time zone. It stays a float because session_end/stamp_complete compute on epochs.
 

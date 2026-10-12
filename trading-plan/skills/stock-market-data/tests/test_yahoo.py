@@ -102,7 +102,7 @@ class TestRangeFor(unittest.TestCase):
 
 class TestCache(unittest.TestCase):
     """#3 — opt-in, model-decided cache. With a cache_dir, a same-market-day closed-candle series is
-    reused, keyed by market date so a new session invalidates it. Fetch is injected (offline) and
+    reused, keyed by the caller's date (period.end) so a new day invalidates it. Fetch is injected (offline) and
     counts its calls: a call is a live fetch, no call is a cache hit."""
 
     def setUp(self):
@@ -146,8 +146,8 @@ class TestCache(unittest.TestCase):
         self.assertEqual(b1, b2)
 
     def test_entry_written_without_source_comes_back_with_it(self):
-        """A cache entry written by the pre-adapter code the same day is still a hit; its bars must
-        come out labelled like live ones."""
+        """Stored bars never carry `source` (the adapter labels them after writing, and entries from
+        before the adapter look the same); a hit must come out labelled like a live answer."""
         daily = yahoo.build_daily(self.raw, now=FROZEN_NOW)
         self.assertNotIn("source", daily[-1])
         with open(self.tmp / "PKN.WA.json", "w") as f:

@@ -83,8 +83,7 @@ class TestAggregate(unittest.TestCase):
         self.assertFalse(b["complete"])     # month-end 07-31 not < 07-25
 
     def test_rolled_up_bars_carry_no_source(self):
-        """Contract delta 1: daily bars name their source, W1/MN bars do not (the replay diff strips
-        source from every bar, so only this test sees it)."""
+        """Output contract (SKILL.md): daily bars name their source, W1/MN bars do not."""
         days = [dict(b, source="yahoo") for b in self._full_week(True)]
         for interval in ("w", "m"):
             [b] = aggregate(days, interval, "2026-07-25")

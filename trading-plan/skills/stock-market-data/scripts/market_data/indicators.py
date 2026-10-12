@@ -1,6 +1,6 @@
 """Pure functions over bar series: weekly/monthly aggregation, Wilder ATR, swing lows, last close.
 
-Bars are dicts {date, o, h, l, c, v, complete}, newest last. Nothing here fetches or knows a vendor.
+Bars are dicts {date, o, h, l, c, v, complete} (daily bars also carry `source`), newest last. Nothing here fetches or knows a vendor.
 """
 from __future__ import annotations
 

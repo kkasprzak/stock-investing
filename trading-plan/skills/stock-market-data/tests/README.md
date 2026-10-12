@@ -72,8 +72,10 @@ values; the tests re-assert them on every run.
 - **Port contract** — `TestQuoteChain`: a higher source wins a shared date and a lower one fills the
   gaps, a source that raises lands in `unavailable`, all of them raising is an error, an empty answer
   is not; `TestDaily`: Yahoo labels every bar with its `source` and raises when it did not answer.
-- **CLI** (`test_cli.py`) — no `--cache` writes nothing, `--cache` writes one file; the
-  `ok:true` / `ok:false` records, and `--bars` edge values that must not crash.
+- **CLI** (`test_cli.py`) — `build_source` without a cache writes nothing, with one writes one
+  file; the `ok:true` / `ok:false` records, and `--bars` edge values that must not crash. Not
+  covered: `main()` turning the `--cache` flag into `build_source(cache=True)` (every `main()` test
+  injects its source); that wiring was checked live only.
 - **Live smoke** (opt-in, `RUN_LIVE_SMOKE=1`) — hits Yahoo to catch API/shape drift the fixtures
   can't see until re-captured.
 

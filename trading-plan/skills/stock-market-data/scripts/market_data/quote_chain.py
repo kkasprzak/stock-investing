@@ -11,8 +11,9 @@ class QuoteChain:
     """A QuoteSource over `sources`, most trusted first. Every source is asked for the whole period
     (the chain knows no exchange calendar, so it cannot ask for gaps). A date a higher source already
     answered is skipped in the lower ones; within one source bars pass unchanged, two bars sharing a
-    date included. A source that raises is recorded in `unavailable` and the next one is asked; only
-    when none answered does the chain raise. An empty answer is an answer."""
+    date included. A source that raises QuoteSourceUnavailableError is recorded in `unavailable` and
+    the next one is asked; only when none answered does the chain raise. Any other exception
+    propagates. An empty answer is an answer."""
 
     name = "chain"
 

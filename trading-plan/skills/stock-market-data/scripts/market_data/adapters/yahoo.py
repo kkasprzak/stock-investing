@@ -158,7 +158,10 @@ class YahooQuotes:
 
     def daily(self, instrument: Instrument, period: DateRange, *, now: float) -> QuoteSeries:
         """Every daily bar of the smallest Yahoo range covering `period` (often more than asked).
-        Any failure to answer, Yahoo's not_found included, raises QuoteSourceUnavailableError."""
+        Any failure to answer, Yahoo's not_found included, raises QuoteSourceUnavailableError.
+        Yahoo's ranges always end today, so only `period.days` picks the range: a period ending in
+        the past still gets the latest bars, not its own window. `period.end` is the cache key's day.
+        The only caller (the CLI) passes a period ending today."""
         resolution = self.resolve(instrument)
         bars, how = self._daily(resolution.symbol, range_for_days(period.days),
                                 period.end.isoformat(), now)
@@ -167,7 +170,7 @@ class YahooQuotes:
         if how == "live":
             self._sleep(self._throttle)                # throttle real fetches only
         for b in bars:
-            b.setdefault("source", self.name)          # also on cache hits written without it
+            b.setdefault("source", self.name)          # after the cache write: stored bars lack it
         return QuoteSeries(tuple(bars), (resolution,))
 
     def _daily(self, yahoo, rng, today, now):
