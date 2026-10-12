@@ -13,6 +13,9 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
+from market_data.model import DailyQuote, Price, Volume
+from market_data.store_file import StoredQuote
+
 SOURCE = "stooq"
 HEADERS = (
     ("Data", "Otwarcie", "Najwyzszy", "Najnizszy", "Zamkniecie", "Wolumen"),
@@ -111,6 +114,16 @@ def _records(path: Path):
         yield line, session, [snap(p) for p in prices], volume
 
 
-def parse(path: Path) -> list:
-    """Every row of a Stooq daily export; the first problem rejects the whole file."""
-    return list(_records(path))
+def parse(path: Path) -> list[StoredQuote]:
+    """Every row of a Stooq daily export as a store row; the first problem rejects the whole file.
+    Prices are snapped first and validated after (Price, then the OHLC rules of DailyQuote): the
+    noise can put a low a hair above the close, and the snapped value is the one that is stored."""
+    out = []
+    for line, session, prices, volume in _records(path):
+        try:
+            o, h, l, c = (Price.parse(p) for p in prices)  # noqa: E741
+            quote = DailyQuote(session, o, h, l, c, Volume.parse(volume))
+        except ValueError as e:
+            raise StooqFormatError(line, str(e)) from None
+        out.append(StoredQuote(quote, SOURCE))
+    return out

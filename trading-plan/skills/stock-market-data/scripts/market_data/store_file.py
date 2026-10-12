@@ -6,8 +6,12 @@ str(Volume), source is the provider of the row (e.g. "stooq").
 """
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
+import os
+import stat
+import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -96,3 +100,78 @@ def to_bar(stored: StoredQuote) -> dict:
     return {"date": q.session.isoformat(), "o": float(q.open.value), "h": float(q.high.value),
             "l": float(q.low.value), "c": float(q.close.value), "v": q.volume.value,
             "complete": True, "source": "store"}
+
+
+NEW_FILE_MODE = 0o644       # rw-r--r--, for a file write() creates; an existing file keeps its mode
+
+
+@dataclass(frozen=True)
+class MergeResult:
+    """What an import does to the file. changed = a session already stored whose quote differs by
+    value (the source of the row is provenance, not part of the comparison)."""
+
+    rows: tuple[StoredQuote, ...]
+    added: int
+    unchanged: int
+    changed: int
+    changed_dates: tuple[date, ...]
+
+
+def _by_session(rows, side: str) -> dict[date, StoredQuote]:
+    out = {}
+    for r in rows:
+        if r.quote.session in out:
+            raise ValueError(f"{side} holds session {r.quote.session} twice")
+        out[r.quote.session] = r
+    return out
+
+
+def merge(existing, incoming) -> MergeResult:
+    """The stored rows with the incoming ones laid over them, by session; incoming wins a
+    difference. An equal quote keeps the stored row, so a re-import does not churn the file's text
+    ("133.50" stays even when the export says "133.5")."""
+    rows = _by_session(existing, "existing")
+    added = unchanged = 0
+    changed_dates = []
+    for session, new in _by_session(incoming, "incoming").items():
+        old = rows.get(session)
+        if old is None:
+            added += 1
+        elif old.quote == new.quote:
+            unchanged += 1
+            continue
+        else:
+            changed_dates.append(session)
+        rows[session] = new
+    return MergeResult(tuple(rows[s] for s in sorted(rows)), added, unchanged, len(changed_dates),
+                       tuple(sorted(changed_dates)))
+
+
+def write(path: Path, rows) -> None:
+    """The whole file, sorted by session, replaced atomically (a temp file beside it, then
+    os.replace): a reader never sees half a file and a failed write leaves the old one. A duplicate
+    session or one on a weekend is the caller's bug: the row types already guarantee the rest."""
+    path = Path(path)
+    ordered = sorted(rows, key=lambda r: r.quote.session)
+    for prev, cur in zip(ordered, ordered[1:]):
+        if cur.quote.session == prev.quote.session:
+            raise ValueError(f"session {cur.quote.session} appears twice")
+    for r in ordered:
+        if r.quote.session.weekday() >= 5:
+            raise ValueError(f"session {r.quote.session} falls on a weekend")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding=ENCODING, newline="") as f:
+            out = csv.writer(f, lineterminator=LINE_TERMINATOR)
+            out.writerow(HEADER)
+            for r in ordered:
+                q = r.quote
+                out.writerow((q.session.isoformat(), q.open, q.high, q.low, q.close, q.volume,
+                              r.source))
+        # mkstemp makes the temp file 0600; the store file is an ordinary file in the repo.
+        os.chmod(tmp, stat.S_IMODE(path.stat().st_mode) if path.exists() else NEW_FILE_MODE)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
