@@ -25,15 +25,16 @@ test_cli.py             scripts/quotes.py — build_source (the composition root
 fixtures/               captured Yahoo responses and the Stooq CSVs the golden values come from
 ```
 
-Every test file starts with `import support`: that import puts `../scripts` on `sys.path`, so the
-file can then `import quotes` and `import market_data...`. The module is named `support`, not
+Every test file imports `support` (`import support` or `from support import ...`) before anything
+from `scripts/`: that import puts `../scripts` on `sys.path`, so the file can then `import quotes`
+and `import market_data...`. The module is named `support`, not
 `fixtures`, because `fixtures/` is the directory of captured vendor responses.
 
 No mocks. Whatever a test needs to replace is a seam the code already offers: a source is a fake
 class implementing the `QuoteSource` port (`test_quote_chain.py`, `test_cli.py`), and the adapter
 takes its `fetch` and `sleep` as constructor arguments, so `test_yahoo.py` hands it fixtures and a
-no-op or recording sleep. `main(argv, source)` and `build_source(cache, cache_dir=..., fetch=...)` take
-the same injections, so the CLI is tested without the network and without touching the real cache.
+no-op or recording sleep. `main(argv, source)` and `build_source(cache, cache_dir=..., fetch=...,
+sleep=...)` take the same injections, so the CLI is tested without the network and without touching the real cache.
 
 ## How it stays deterministic
 
@@ -59,8 +60,10 @@ values; the tests re-assert them on every run.
   just-closed week complete on a Saturday).
 - **Session close** (`TestSessionClose`) — the flag follows the venue's session, not the date: today's
   bar forming during the session, complete after the close and all evening, conservative when the
-  vendor omits the trading period, market tz beating machine tz, and a same-day cache hit re-stamped
-  after the close. Weekly/monthly counterparts live in `TestAggregate`.
+  vendor omits the trading period, market tz beating machine tz. On the cache side: an entry written
+  before the close is refetched after it, one written after the close is reused, and a hit is
+  re-stamped against the read clock (an evening entry whose bar was stored as forming comes back
+  closed once the market's date has moved on). Weekly/monthly counterparts live in `TestAggregate`.
 - **ATR** (`TestATR`) — the number two risk skills must agree on, pinned from three sides: arithmetic
   hand-computable at `n=2` (including the `|prevC - L|` branch), independence from `--bars` in both
   directions (a short slice cannot starve it, a wide fetch cannot shift it), and a regression golden at

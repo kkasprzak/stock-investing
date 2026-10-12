@@ -331,6 +331,19 @@ class TestSessionClose(unittest.TestCase):
                               self.raw(close, price=151.0), self.raw(close, price=144.84))
         self.assertEqual(src, "live")
 
+    def test_cache_hit_restamps_complete_against_the_read_clock(self):
+        """`complete` is never trusted from disk. With no trading period from the vendor, an evening
+        write stores the day's bar as forming (conservative); read back after the market's midnight
+        by a caller whose own date is still 07-28, the entry is a hit, and that bar is now a past
+        market date, so the hit must report it closed."""
+        write_at, read_at = warsaw(2026, 7, 28, 23 * 3600), warsaw(2026, 7, 29, 1 * 3600)
+        self.assertFalse(yahoo.build_daily(self.raw(None), now=write_at)[-1]["complete"])
+        bars, src = self._cached(write_at, read_at, self.raw(None), self.raw(None, price=999.0))
+        self.assertEqual(src, "cache")
+        self.assertEqual(bars[-1]["date"], "2026-07-28")
+        self.assertEqual(bars[-1]["c"], 144.84)
+        self.assertTrue(bars[-1]["complete"])
+
 
 class TestBuildDailyBackfill(unittest.TestCase):
     def test_trailing_null_close_backfilled_from_regularmarketprice(self):

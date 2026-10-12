@@ -7,6 +7,8 @@ pinned to FROZEN_TODAY. Expected OHLC is anchored to Stooq CSVs (fixtures/stooq_
 source we cross-checked by hand. The two known ex-dividend weeks differ from Stooq only on the pre-ex
 Open/High (Stooq back-adjusts; we keep actual-traded) — asserted explicitly, not silently skipped.
 """
+from __future__ import annotations
+
 import json, unittest
 from datetime import date
 
