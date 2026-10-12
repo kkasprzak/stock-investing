@@ -11,8 +11,9 @@ import json, unittest
 from datetime import date
 
 from support import FROZEN_TODAY, TOL, DIVIDEND_WEEKS, load_stooq, pipeline
-from market_data.indicators import (_period, aggregate, atr_wilder, bars_needed, last_closed,
-                                    swing_lows)
+from market_data.adapters.yahoo import range_for_days
+from market_data.indicators import (_period, aggregate, atr_wilder, bars_needed, calendar_days,
+                                    last_closed, swing_lows)
 from quotes import quote_record
 
 
@@ -78,6 +79,22 @@ class TestAggregate(unittest.TestCase):
         days = [{"date": "2026-07-01", "o": 1.0, "h": 2.0, "l": 0.5, "c": 1.5, "v": 10, "complete": True}]
         [b] = aggregate(days, "m", "2026-07-25")
         self.assertFalse(b["complete"])     # month-end 07-31 not < 07-25
+
+    def test_rolled_up_bars_carry_no_source(self):
+        """Contract delta 1: daily bars name their source, W1/MN bars do not (the replay diff strips
+        source from every bar, so only this test sees it)."""
+        days = [dict(b, source="yahoo") for b in self._full_week(True)]
+        for interval in ("w", "m"):
+            [b] = aggregate(days, interval, "2026-07-25")
+            self.assertNotIn("source", b)
+
+
+class TestCalendarDays(unittest.TestCase):
+    def test_rounds_up_at_a_bucket_boundary(self):
+        """21 daily bars need 31.5 calendar days: ceil gives 32 and the 3mo bucket; floor would give
+        31 and a 1mo fetch one day short."""
+        self.assertEqual(calendar_days("d", 21), 32)
+        self.assertEqual(range_for_days(32), "3mo")
 
 
 class TestLastClosed(unittest.TestCase):

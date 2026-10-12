@@ -23,12 +23,13 @@ sys.path.insert(0, HERE)                        # market_data/ sits next to this
 
 from market_data.adapters import yahoo                      # noqa: E402
 from market_data.adapters.symbol_index import SymbolIndex   # noqa: E402
-from market_data.adapters.yahoo import YahooQuotes          # noqa: E402
+from market_data.adapters.yahoo import YahooQuotes, fetch_chart   # noqa: E402
 from market_data.indicators import (ATR_DEFAULT_N, SWING_SESSIONS_DEFAULT,   # noqa: E402
                                     aggregate, atr_wilder, bars_needed, calendar_days,
                                     last_closed, swing_lows)
 from market_data.model import DateRange, Interval           # noqa: E402
-from market_data.ports import QuoteSourceUnavailableError   # noqa: E402
+from market_data.ports import QuoteSource, QuoteSourceUnavailableError   # noqa: E402
+from market_data.quote_chain import QuoteChain              # noqa: E402
 
 SYMBOLS = Path(HERE) / "symbols.json"           # the shared symbol map (self-contained)
 # Opt-in on-disk cache of daily series, OUTSIDE the skill (keeps the distributable artifact pure).
@@ -40,6 +41,19 @@ CACHE_DIR = Path(os.environ.get("STOCK_MARKET_DATA_CACHE")
                      else os.path.join(tempfile.gettempdir(), "stock-market-data")))
 DEFAULT_BARS = 6                                # bars returned per symbol
 MAX_PERIOD_DAYS = 365 * 50                      # beyond Yahoo's widest bucket ("max"); keeps timedelta sane
+MIN_PERIOD_DAYS = 9                             # the port's promise: an empty answer never means "weekend"
+                                                # (below Yahoo's smallest bucket, 1mo, so no fetch changes)
+
+
+def build_source(cache: bool, *, cache_dir: Path = CACHE_DIR, fetch=fetch_chart,
+                 sleep=time.sleep) -> QuoteSource:
+    """The composition root: which sources answer, in which order. `fetch` and `sleep` are injectable
+    so tests run offline and unthrottled."""
+    # no --cache = no cache: fail-safe (a forgotten flag means slower, never stale)
+    yahoo_source = YahooQuotes(fetch=fetch, cache_dir=cache_dir if cache else None, sleep=sleep)
+    # Order on this list = trust hierarchy (ADR 0000, docs/adr/0000-own-candle-store-is-the-most-
+    # trusted-source-of-market-data.md): the own quote store goes first once it exists.
+    return QuoteChain([yahoo_source])
 
 
 def quote_record(daily, interval, bars, today, atr_n=None, swings=None):
@@ -58,12 +72,17 @@ def quote_record(daily, interval, bars, today, atr_n=None, swings=None):
 
 
 def _from_yahoo(entries):
-    """The Yahoo entry among a source's Resolutions or SourceFailures: the output contract's fields
-    (yahoo_symbol, resolved_by, reason) are Yahoo's by name."""
-    return next(e for e in entries if e.source == YahooQuotes.name)
+    """The Yahoo entry among a source's Resolutions or SourceFailures, or None when Yahoo is not
+    among them: the output contract's fields (yahoo_symbol, resolved_by, reason) are Yahoo's by name."""
+    return next((e for e in entries if e.source == YahooQuotes.name), None)
 
 
-def main():
+def _yahoo_fields(resolved):
+    res = _from_yahoo(resolved)
+    return (res.symbol, res.by.value) if res else (None, None)
+
+
+def main(argv=None, source: QuoteSource | None = None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("tickers", nargs="+", metavar="TICKER", help="broker tickers, e.g. PKN.PL ALE.PL")
     ap.add_argument("--interval", choices=("d", "w", "m"), default="d",
@@ -82,17 +101,19 @@ def main():
     ap.add_argument("--cache", action="store_true",
                     help="reuse the same market day's closed candles from an on-disk cache; omit when "
                          "the moment needs live data")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     index = SymbolIndex(SYMBOLS)
     interval = Interval(args.interval)
     end = date.today()
     today = end.isoformat()
     # --bars <= 0 never failed and must not now: DateRange would reject an inverted range.
-    days = min(calendar_days(interval, bars_needed(max(args.bars, 1), args.atr, args.swings)),
+    days = min(max(calendar_days(interval, bars_needed(max(args.bars, 1), args.atr, args.swings)),
+                   MIN_PERIOD_DAYS),
                MAX_PERIOD_DAYS)
     period = DateRange(end - timedelta(days=days), end)
-    source = YahooQuotes(cache_dir=CACHE_DIR if args.cache else None)   # no --cache = no cache: fail-safe
+    if source is None:
+        source = build_source(args.cache)
     quotes = {}
     for tk in args.tickers:
         instrument = index.lookup(tk)
@@ -100,14 +121,18 @@ def main():
         try:
             series = source.daily(instrument, period, now=time.time())
         except QuoteSourceUnavailableError as e:
-            res = _from_yahoo(e.resolved)
-            quotes[tk] = {"yahoo_symbol": res.symbol, "xtb": xtb, "resolved_by": res.by.value,
-                          "ok": False, "reason": _from_yahoo(e.failures).reason, "value": "[NO DATA]"}
+            symbol, by = _yahoo_fields(e.resolved)
+            failure = _from_yahoo(e.failures)
+            quotes[tk] = {"yahoo_symbol": symbol, "xtb": xtb, "resolved_by": by, "ok": False,
+                          "reason": failure.reason if failure else None, "value": "[NO DATA]"}
             continue
-        res = _from_yahoo(series.resolved)
-        quotes[tk] = {"yahoo_symbol": res.symbol, "xtb": xtb, "resolved_by": res.by.value, "ok": True,
+        symbol, by = _yahoo_fields(series.resolved)
+        quotes[tk] = {"yahoo_symbol": symbol, "xtb": xtb, "resolved_by": by, "ok": True,
                       **quote_record(list(series.bars), interval, args.bars, today, args.atr,
                                      args.swings)}
+        if series.unavailable:                      # only when some source did not answer
+            quotes[tk]["unavailable"] = [{"source": f.source, "reason": f.reason}
+                                         for f in series.unavailable]
 
     result = {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

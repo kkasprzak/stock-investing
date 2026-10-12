@@ -153,24 +153,11 @@ class TestCache(unittest.TestCase):
         self.assertEqual(self.calls, [])                          # a hit, not a refetch
         self.assertEqual({b["source"] for b in bars}, {"yahoo"})
 
-
-class TestCacheDefault(unittest.TestCase):
-    """Fail-safe default (was TestCache.test_default_is_always_live_and_writes_nothing): a source
-    built without a cache directory fetches live every time. The 'writes nothing' half is the CLI's
-    wiring (no --cache -> no cache_dir) and has no seam until build_source exists; it returns as
-    build_source(cache=False) in test_cli.py (sim-5ym), which also retires this class."""
-
-    def test_default_is_always_live(self):
-        calls = []
-        def fake_fetch(sym, rng):
-            calls.append((sym, rng)); return load_yahoo("PKN"), None
-        source = YahooQuotes(fetch=fake_fetch, throttle=0, sleep=lambda s: None)
-        end = date.fromisoformat(FROZEN_TODAY)
-        period = DateRange(end - timedelta(days=300), end)
-        instrument = Instrument(key="PKN.PL", isin=None, symbols={"yahoo": "PKN.WA"})
-        source.daily(instrument, period, now=FROZEN_NOW)
-        source.daily(instrument, period, now=FROZEN_NOW)
-        self.assertEqual(len(calls), 2)
+    def test_symbol_with_path_separator_is_flattened_into_one_file(self):
+        """A vendor symbol containing os.sep must not escape into a subdirectory of the cache."""
+        odd = Instrument(key="A/B", isin=None, symbols={"yahoo": "A" + os.sep + "B"})
+        self.source.daily(odd, period(ONE_YEAR), now=FROZEN_NOW)
+        self.assertEqual(os.listdir(self.tmp), ["A_B.json"])
 
 
 class TestDaily(unittest.TestCase):
