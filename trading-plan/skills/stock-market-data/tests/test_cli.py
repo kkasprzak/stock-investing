@@ -15,7 +15,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from support import FROZEN_TODAY, FROZEN_NOW, load_yahoo
+from support import FROZEN_TODAY, FROZEN_NOW, FakeSource, load_yahoo
 import quotes
 from market_data.adapters import yahoo
 from market_data.model import DateRange, Instrument
@@ -66,23 +66,6 @@ def bar(day, close, source="yahoo"):
 BARS = tuple(bar(f"2026-07-{d:02d}", float(d)) for d in (20, 21, 22, 23, 24))
 YAHOO_PKN = Resolution("yahoo", "PKN.WA", ResolvedBy.SYMBOLS_JSON)
 STORE_PKN = Resolution("store", "PKN", ResolvedBy.SYMBOLS_JSON)
-
-
-class FakeSource:
-    """A QuoteSource giving every instrument the same answer, or raising `error`."""
-
-    name = "fake"
-
-    def __init__(self, series=None, error=None):
-        self._series = series
-        self._error = error
-        self.asked = []                     # (instrument key, period)
-
-    def daily(self, instrument, period, *, now):
-        self.asked.append((instrument.key, period))
-        if self._error is not None:
-            raise self._error
-        return self._series
 
 
 def run(argv, source):
