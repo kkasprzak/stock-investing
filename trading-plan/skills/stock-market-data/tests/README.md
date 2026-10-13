@@ -16,21 +16,26 @@ One test file per module of `scripts/`, plus shared support:
 
 ```
 support.py              frozen clock (FROZEN_TODAY, FROZEN_DATE, FROZEN_NOW, GPW_CLOSE, warsaw()), TOL,
-                        fixture loaders (load_yahoo, load_stooq), DIVIDEND_WEEKS, pipeline(), bar
-                        builders (daily_bar, flat_bar, price, num), FakeSource; puts ../scripts on sys.path
-test_model.py           market_data/model.py — DateRange, Interval, Instrument, Isin, Price, Volume, DailyQuote
+                        fixture loaders (load_yahoo, load_stooq), DIVIDEND_WEEKS, pipeline() (DailyBar
+                        or PeriodBar), bar builders (daily_bar: a DailyBar from plain numbers, trusted
+                        unless trust= says otherwise; flat_bar; price: a Price; num: a Price as the
+                        float the output prints), FakeSource; puts ../scripts on sys.path
+test_model.py           market_data/model.py — DateRange, Interval, Instrument, Isin, Price, Volume, DailyQuote,
+                        Trust, Status, Quality, DailyBar, PeriodBar
 test_store_file.py      market_data/store_file.py — the store's file schema: read, write, merge, StoredQuote
-test_store.py           market_data/adapters/store.py — StoreQuotes: what the store answers, no_store, malformed,
-                        the store ahead of a lower source in a chain
+test_store.py           market_data/adapters/store.py — StoreQuotes: what the store answers (every bar trusted),
+                        no_store, malformed, the store ahead of a lower source in a chain
 test_import_stooq.py    market_data/importers/stooq.py and scripts/import_quotes.py — parse, snap, the real-export
                         guards and ATR pins, the importer end to end on a temp store, its usage errors
-test_indicators.py      market_data/indicators.py — _period, aggregate, last_closed, ATR, swing lows, Stooq oracle
+test_indicators.py      market_data/indicators.py — _period, aggregate, last_closed, ATR, swing lows, the quality
+                        every reading carries, placeholder sessions (ADR 0002), Stooq oracle
 test_quote_chain.py     market_data/quote_chain.py — QuoteChain: trust order, gap filling, sources that did not answer
 test_yahoo.py           market_data/adapters/yahoo.py — resolve, range buckets, cache, session close, backfill,
-                        to_bar (row to DailyBar, unusable numbers to gaps), live smoke
+                        to_bar (row to DailyBar, unusable numbers to gaps), the placeholder rule, live smoke
 test_symbol_index.py    market_data/adapters/symbol_index.py — lookup by ISIN / broker ticker, broker symbol
 test_cli.py             scripts/quotes.py — build_source (the composition root), main() over an injected source,
-                        flags reaching build, to_json, the 0.4.0 output pin
+                        flags reaching build, to_json, the 0.4.0 and 0.6.0 output pins, placeholder
+                        sessions end to end
 fixtures/               see below
 ```
 
@@ -53,8 +58,19 @@ stooq_ale_d_raw.csv             same kind of export, ALE 2026-05-04..2026-10-09,
 stooq_peo_w_raw.csv             same kind of export, weekly (41 weeks dated on Sundays): must be rejected
 store/PLPKN0000018.csv          hand-written, in the store's own schema (LF): 2026-10-02 and 10-05..10-09, round numbers
 cli_0_4_0_PKN.json              the output of plugin 0.4.0 (commit 2589785) for `PKN.PL --atr --swings` on
-                                yahoo_PKN.json, minus `generated`: without a store the output must not change
+                                yahoo_PKN.json, minus `generated`: without a store the output may only add
+                                announced keys to it
+cli_0_6_0_PKN.json              the output of plugin 0.6.0 for the same arguments on the same fixture, minus
+                                `generated`: without a store the output must not change, byte for byte
 ```
+
+No fixture holds the October placeholders. `TestPlaceholderSessionsEndToEnd` (`test_cli.py`) builds
+its Yahoo response by hand, modelled on what Yahoo served in October 2026: real sessions
+09-01..10-02 with moving prices, then 10-05..10-09 as placeholders (all four prices at the 10-02
+close, volume 0), plus a temp store holding the real sessions up to 10-02. `store/PLPKN0000018.csv`
+does not fit, because it holds 10-05..10-09 itself and would hide the gap. The indicator-level
+scenario (`TestPlaceholderSessions`) instead turns the last five sessions of `yahoo_PKN.json`
+(07-20..07-24) into placeholders at the 07-17 close.
 
 Every Stooq CSV, the `_raw` exports included, is committed as Stooq serves it: CRLF, Polish header,
 no BOM. The parser reads it with `newline=""`, so CRLF and LF both pass; the inline exports in
@@ -114,6 +130,23 @@ values; the tests re-assert them on every run.
 - **Port contract** — `TestQuoteChain`: a higher source wins a shared date and a lower one fills the
   gaps, a source that raises lands in `unavailable`, all of them raising is an error, an empty answer
   is not; `TestDaily`: Yahoo labels every bar with its `source` and raises when it did not answer.
+- **Trust** — each source judges its own sessions. `TestPlaceholder` (`test_yahoo.py`): a bar with
+  `o == h == l == c` and volume 0 or missing is untrusted `"placeholder"`, judged alone (the first
+  bar of an answer too, five in a row all of them), forming bars and cache hits included; a flat bar
+  with volume, a bar with a range and no volume, and a bar with a missing price stay trusted.
+  `test_store.py`: every store bar is trusted, even one shaped like a placeholder. `TestTrust`,
+  `TestQuality`, `TestPeriodBar` (`test_model.py`): an empty reason is rejected; quality is sorted and
+  unique, and `uncertain` as soon as it names a session; a period bar without a close is `no_value`.
+- **Quality of readings** — `TestReadingsCarryQuality`: without an untrusted session every reading is
+  `good` and every value is the one the golden tests pin. `TestPlaceholderSessions`: ATR and its
+  `as_of` equal the ATR on the clean prefix, `uncertain` with the five dates; a gap inside the window
+  is named and pushes the window one candle further back; no swing low is confirmed by a placeholder,
+  and one is once real sessions follow the gap; `last_closed` is the last real session, read over the
+  whole series even when the `--bars` slice is all placeholders; a week of placeholders stays in the
+  series as `no_value`, a week with two real sessions is read from those two, a placeholder Friday
+  still closes the week, weekly readings skip the `no_value` week and name its sessions; a forming
+  untrusted bar enters no period. Several of these also show that the test has teeth: the same
+  series read as if trusted gives a different answer.
 - **Store, file** (`test_store_file.py`) — `read` rejects every broken rule with its line (header,
   columns, number, OHLC, weekend, duplicate, order, CRLF, BOM, not UTF-8, unreadable); `write`
   round-trips byte for byte, sorts, replaces atomically; `merge` counts added / unchanged / changed
@@ -143,8 +176,15 @@ values; the tests re-assert them on every run.
   source in trust order, and `--bars` edge values that must not crash.
   `TestFlagsReachTheCompositionRoot`: `--store` and `--cache` reach `build_source` through `main()`,
   and a literal `${` in `--store`, or a `--store` whose parent directory does not exist, exits 2
-  before anything is built; a missing store directory under an existing parent still reaches it. `TestOutputPinnedAt040`: without
-  a store the output equals `fixtures/cli_0_4_0_PKN.json`.
+  before anything is built; a missing store directory under an existing parent still reaches it.
+  `to_json`: a daily bar prints `trusted` and, only when false, `untrusted_reason`; a W1/MN bar and
+  every reading print `status` and `excluded_sessions`. `TestOutputPinnedAt040`: without a store the
+  output is `fixtures/cli_0_4_0_PKN.json` plus only the keys named in `NEW_KEYS`, in the same order
+  and with the same values (`data_note` aside); without placeholders every bar is trusted and every
+  derived value `good` on D1, W1 and MN. `TestOutputPinnedAt060`: without a store the output equals
+  `fixtures/cli_0_6_0_PKN.json` byte for byte. `TestPlaceholderSessionsEndToEnd`: store bars
+  trusted, Yahoo placeholders marked, ATR and `last_closed` as of the last real session and
+  `uncertain` with the gap's dates, the week of placeholders `no_value`.
 - **Live smoke** (opt-in, `RUN_LIVE_SMOKE=1`) — hits Yahoo to catch API/shape drift the fixtures
   can't see until re-captured.
 
@@ -158,7 +198,8 @@ keep the last ~150 bars + `meta` (`gmtoffset`, `regularMarketPrice`, `regularMar
 `currentTradingPeriod`), and re-trim
 the `stooq_{pkn,kgh,lpp}_*` CSVs to their last ~16 rows. Then re-pin `FROZEN_TODAY` and refresh the
 expected values. A re-captured `yahoo_PKN.json` also means regenerating `cli_0_4_0_PKN.json` with
-plugin 0.4.0 (commit 2589785), not with the current code, or the pin stops pinning anything.
+plugin 0.4.0 (commit 2589785) and `cli_0_6_0_PKN.json` with plugin 0.6.0, not with the current code,
+or the pins stop pinning anything.
 
 The `_raw` exports are not re-captured: the ATR pins and the snap guard are tied to them as they
 are. A new export goes in under a new name.

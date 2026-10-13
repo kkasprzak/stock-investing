@@ -369,6 +369,23 @@ class TestOutputPinnedAt040(unittest.TestCase):
                 self.assertPinnedPlusNewKeys(pinned, got)
 
 
+class TestOutputPinnedAt060(unittest.TestCase):
+    """Without a store the consumer reads what plugin 0.6.0 printed: header and records byte for
+    byte. fixtures/cli_0_6_0_PKN.json is the 0.6.0 output for these arguments, fed by the same Yahoo
+    fixture, minus 'generated' (the wall clock). TestOutputPinnedAt040 keeps the older promise."""
+
+    ARGV = ["PKN.PL", "--atr", "--swings"]
+
+    def test_header_and_records_match_0_6_0(self):
+        source = quotes.build_source(False, fetch=lambda sym, rng: (load_yahoo("PKN"), None),
+                                     sleep=lambda s: None)
+        doc = run(self.ARGV, source)
+        del doc["generated"]
+        with open(os.path.join(FX, "cli_0_6_0_PKN.json"), encoding="utf-8") as f:
+            pinned = f.read()
+        self.assertEqual(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", pinned)
+
+
 class TestPlaceholderSessionsEndToEnd(unittest.TestCase):
     """The incident as the CLI met it: Yahoo served 10-05..10-09 as placeholders (one price, no
     volume), the own store holds the real sessions up to 10-02. Built by hand: the store fixture
