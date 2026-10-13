@@ -283,7 +283,7 @@ class TestSessionClose(unittest.TestCase):
         rows = yahoo.build_daily(self.raw(warsaw(2026, 7, 28, GPW_CLOSE)),
                                  now=warsaw(2026, 7, 28, 23 * 3600))
         self.assertEqual(last_closed([yahoo.to_bar(r) for r in rows]),
-                         LastClosed(self.DAY, 144.84, Quality.GOOD))
+                         LastClosed(self.DAY, price("144.84"), Quality.GOOD))
 
     def _cached(self, write_at, read_at, midday, final):
         """Write the cache at `write_at` from `midday`, read it at `read_at` (live would give `final`).

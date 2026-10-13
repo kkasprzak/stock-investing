@@ -8,8 +8,9 @@ from decimal import Decimal
 
 import support  # noqa: F401  (puts scripts/ on sys.path)
 import quotes
-from market_data.model import (DailyBar, DailyQuote, DateRange, Instrument, Interval, Isin,
-                               PeriodBar, Price, Quality, Status, Trust, Volume)
+from market_data.model import (AtrPeriod, DailyBar, DailyQuote, DateRange, Instrument, Interval,
+                               Isin, PeriodBar, PeriodInterval, Price, Quality, SessionsEachSide,
+                               Status, Trust, Volume)
 
 
 class TestDateRange(unittest.TestCase):
@@ -43,6 +44,52 @@ class TestInterval(unittest.TestCase):
     def test_unknown_value_is_rejected(self):
         with self.assertRaises(ValueError):
             Interval("x")
+
+
+class TestPeriodInterval(unittest.TestCase):
+    """The interval aggregate rolls daily bars up into: weekly or monthly, never daily."""
+
+    D = date.fromisoformat
+
+    def test_daily_is_not_a_period_interval(self):
+        with self.assertRaises(ValueError):
+            PeriodInterval(Interval.DAILY)
+
+    def test_holds_an_interval_not_its_string(self):
+        with self.assertRaises(ValueError):
+            PeriodInterval("w")
+
+    def test_constants(self):
+        self.assertEqual((PeriodInterval.WEEKLY.interval, PeriodInterval.MONTHLY.interval),
+                         (Interval.WEEKLY, Interval.MONTHLY))
+        self.assertEqual(PeriodInterval(Interval.WEEKLY), PeriodInterval.WEEKLY)
+
+    def test_weekly_period_is_monday_to_friday(self):
+        week = DateRange(self.D("2026-07-20"), self.D("2026-07-24"))
+        self.assertEqual(PeriodInterval.WEEKLY.period(self.D("2026-07-24")), week)
+        self.assertEqual(PeriodInterval.WEEKLY.period(self.D("2026-07-20")), week)
+
+    def test_monthly_period_and_year_boundary(self):
+        self.assertEqual(PeriodInterval.MONTHLY.period(self.D("2026-07-15")),
+                         DateRange(self.D("2026-07-01"), self.D("2026-07-31")))
+        self.assertEqual(PeriodInterval.MONTHLY.period(self.D("2026-12-31")),
+                         DateRange(self.D("2026-12-01"), self.D("2026-12-31")))
+
+
+class TestCounts(unittest.TestCase):
+    """The ATR period and the sessions each side of a swing low: whole numbers, at least 1, and two
+    types, so one cannot be passed where the other is meant."""
+
+    def test_at_least_one(self):
+        for cls in (AtrPeriod, SessionsEachSide):
+            self.assertEqual(cls(1).value, 1)
+            self.assertEqual(str(cls(14)), "14")
+            for bad in (0, -3, True, 2.0, "2", None):
+                with self.subTest(cls=cls.__name__, value=bad), self.assertRaises(ValueError):
+                    cls(bad)
+
+    def test_the_two_are_not_interchangeable(self):
+        self.assertNotEqual(AtrPeriod(2), SessionsEachSide(2))
 
 
 class TestInstrument(unittest.TestCase):

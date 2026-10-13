@@ -8,56 +8,78 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from typing import Sequence, Union
 
-from market_data.model import DailyBar, Interval, PeriodBar, Price, Quality, Volume
+from market_data.model import (AtrPeriod, DailyBar, DateRange, Interval, PeriodBar,
+                               PeriodInterval, Price, Quality, SessionsEachSide, Volume)
 
-ATR_DEFAULT_N = 14                              # Wilder's default lookback
+ATR_DEFAULT_N = AtrPeriod(14)                   # Wilder's default lookback
 ATR_WARMUP = 5                                  # x n candles of run-up before ATR is settled
-SWING_SESSIONS_DEFAULT = 2                      # sessions each side that must have a higher low
+SWING_SESSIONS_DEFAULT = SessionsEachSide(2)    # sessions each side that must have a higher low
 
 Bar = Union[DailyBar, PeriodBar]
 
 
 @dataclass(frozen=True)
 class AtrReading:
-    n: int
+    n: AtrPeriod
     method: str
-    value: float
+    value: float                # a distance, not a price: zero is a legal ATR
     bars_used: int
     as_of: date                 # the newest candle it read
-    short_history: bool
-    interval: str | None        # the interval label, when the caller named one
+    interval: Interval | None   # when the caller named one
     quality: Quality
+
+    @property
+    def short_history(self) -> bool:
+        """Fewer true ranges (one per candle after the first) than the run-up ATR needs to settle."""
+        return self.bars_used - 1 < ATR_WARMUP * self.n.value
 
 
 @dataclass(frozen=True)
 class SwingLow:
     session: date               # on W1/MN, the period's first day
-    low_price: float
+    low_price: Price
     higher_than_previous_row_low: bool | None
     sessions_after_in_window: int
-    lowest_low_in_those_sessions: float
-    undercut_by_later_session: bool
+    lowest_low_in_those_sessions: Price
+
+    @property
+    def undercut_by_later_session(self) -> bool:
+        """Price has since traded below the low; strict, so an exact retest is not an undercut."""
+        return self.lowest_low_in_those_sessions.value < self.low_price.value
 
 
 @dataclass(frozen=True)
 class SwingLows:
-    each_side: int
-    window_first_session: date
-    window_last_session: date
+    """`detectable_through` is the session `each_side` sessions before the window's last one: kept,
+    not derived, because which calendar date that is depends on the sessions in the window, not on
+    its two ends. What can be checked here is that it fits the window and the confirmation."""
+
+    each_side: SessionsEachSide
+    window: DateRange           # first and last session read
     window_sessions: int
     detectable_through: date | None
     detected: tuple[SwingLow, ...]
-    interval: str | None
+    interval: Interval | None
     quality: Quality
+
+    def __post_init__(self) -> None:
+        confirmable = self.window_sessions > self.each_side.value
+        through = self.detectable_through
+        if not confirmable and through is not None:
+            raise ValueError(f"{self.window_sessions} sessions cannot confirm a low with "
+                             f"{self.each_side} each side, yet detectable_through is {through}")
+        if confirmable and (through is None or not self.window.start <= through < self.window.end):
+            raise ValueError(f"detectable_through {through} is not a session inside "
+                             f"{self.window.start}..{self.window.end} before its last")
 
 
 @dataclass(frozen=True)
 class LastClosed:
     session: date               # on W1/MN, the period's first day
-    close: float
+    close: Price
     quality: Quality
 
 
@@ -108,18 +130,16 @@ def calendar_days(interval, bars):
     return math.ceil(bars * Interval(interval).calendar_factor)
 
 
-def _period(d: date, interval) -> tuple[date, date]:
-    """(label, period_end) for a daily session grouped weekly/monthly.
-    label = period start (Monday / 1st); period_end = last business/calendar day (Friday / month-end)."""
-    interval = Interval(interval)
-    if interval is Interval.WEEKLY:
-        monday = d - timedelta(days=d.weekday())
-        return monday, monday + timedelta(days=4)                      # Mon .. Fri
-    nxt = date(d.year + 1, 1, 1) if d.month == 12 else date(d.year, d.month + 1, 1)
-    return date(d.year, d.month, 1), nxt - timedelta(days=1)           # 1st .. month-end
+def _require(value: object, cls: type, what: str) -> None:
+    """Refuses an argument of the wrong type where nothing else would notice: a plain int or the
+    other count for a count (the two counts have two types so they cannot be swapped), a bare
+    Interval for a rollup."""
+    if not isinstance(value, cls):
+        raise TypeError(f"{what} must be {cls.__name__}, not {type(value).__name__}")
 
 
-def aggregate(daily: Sequence[DailyBar], interval, today: date) -> list[PeriodBar]:
+def aggregate(daily: Sequence[DailyBar], interval: PeriodInterval,
+              today: date) -> list[PeriodBar]:
     """Roll daily bars up into weekly/monthly candles, newest last. o = first day's open, h/l = period
     extremes, c = last day's close, v = summed volume, each column over the trusted days that have
     it. A period is complete iff its last business/calendar day is before today, or that day has been
@@ -130,11 +150,12 @@ def aggregate(daily: Sequence[DailyBar], interval, today: date) -> list[PeriodBa
     or not (ADR 0002), so a placeholder Friday still closes its week and a period with no trusted
     session stays in the series, with no values. Its quality names the closed sessions it left out;
     an untrusted forming bar is neither a value nor a left-out session of the period in progress."""
-    interval = Interval(interval)
+    _require(interval, PeriodInterval, "aggregate's interval")
     newest = daily[-1].session if daily else None
     order, groups = [], {}
     for b in daily:
-        label, end = _period(b.session, interval)
+        period = interval.period(b.session)
+        label, end = period.start, period.end
         g = groups.get(label)
         if g is None:
             g = groups[label] = (end, [])
@@ -163,24 +184,33 @@ def aggregate(daily: Sequence[DailyBar], interval, today: date) -> list[PeriodBa
     return out
 
 
-def series_window(atr_n=None):
+def series_window(atr_n: AtrPeriod | None = None) -> int:
     """The fixed lookback every derived block reads, in candles. One definition on purpose: ATR and
     the swing lows must describe the same stretch of history, or a stop distance in ATR multiples
     would be measured against structure the ATR never saw."""
-    return (atr_n or ATR_DEFAULT_N) * ATR_WARMUP + 1
+    if atr_n is None:
+        atr_n = ATR_DEFAULT_N
+    _require(atr_n, AtrPeriod, "the ATR period")
+    return atr_n.value * ATR_WARMUP + 1
 
 
-def bars_needed(bars, atr_n=None, swings=None):
+def bars_needed(bars: int, atr_n: AtrPeriod | None = None,
+                swings: SessionsEachSide | None = None) -> int:
     """Candles the fetch must cover: what the caller wants to see, or the derived blocks' window if
     that is longer. ATR is recursive, so its value depends on how much history it was fed — deriving
     it from the returned slice would make the same instrument read differently for a 6-bar morning
     check and a 70-bar sizing run. The window is therefore fixed here, independent of `bars`;
     atr_wilder() and swing_lows() then trim to that same window from the other side, so a wider fetch
     cannot shift either result."""
-    return max(bars, series_window(atr_n)) if (atr_n or swings) else bars
+    if swings is not None:
+        _require(swings, SessionsEachSide, "the sessions each side")
+    if atr_n is None and swings is None:
+        return bars
+    return max(bars, series_window(atr_n))
 
 
-def atr_wilder(bars: Sequence[Bar], n=ATR_DEFAULT_N, interval=None) -> AtrReading | None:
+def atr_wilder(bars: Sequence[Bar], n: AtrPeriod = ATR_DEFAULT_N,
+               interval: Interval | None = None) -> AtrReading | None:
     """Wilder's ATR(n) over a series (newest last) — or None when there are fewer than n+1 usable
     candles. Method is J. Welles Wilder Jr., New Concepts in Technical Trading Systems (1978):
     TR = max(H-L, |H-prevC|, |prevC-L|), seed = mean of the first n TRs, then
@@ -193,7 +223,8 @@ def atr_wilder(bars: Sequence[Bar], n=ATR_DEFAULT_N, interval=None) -> AtrReadin
     out. `short_history` marks a value computed on less than the ATR_WARMUP run-up — still reported
     (never a silent [NO DATA]), but flagged as not yet settled."""
     idx = _usable(bars, "high", "low", "close")[-series_window(n):]   # fixed window: a longer fetch
-    if len(idx) < n + 1:                                              # must not shift the value
+    k = n.value                                                       # must not shift the value
+    if len(idx) < k + 1:
         return None
     usable = [bars[i] for i in idx]
     h = [_f(b.high) for b in usable]
@@ -201,16 +232,17 @@ def atr_wilder(bars: Sequence[Bar], n=ATR_DEFAULT_N, interval=None) -> AtrReadin
     c = [_f(b.close) for b in usable]
     trs = [max(h[i] - lo[i], abs(h[i] - c[i - 1]), abs(c[i - 1] - lo[i]))
            for i in range(1, len(usable))]
-    atr = sum(trs[:n]) / n                                  # Wilder's seed
-    for tr in trs[n:]:
-        atr = (atr * (n - 1) + tr) / n
+    atr = sum(trs[:k]) / k                                  # Wilder's seed
+    for tr in trs[k:]:
+        atr = (atr * (k - 1) + tr) / k
     return AtrReading(n=n, method="wilder", value=round(atr, 4), bars_used=len(usable),
-                      as_of=_day(usable[-1]), short_history=len(trs) < ATR_WARMUP * n,
-                      interval=interval, quality=_window_quality(bars, idx[0]))
+                      as_of=_day(usable[-1]), interval=interval,
+                      quality=_window_quality(bars, idx[0]))
 
 
-def swing_lows(bars: Sequence[Bar], each_side=SWING_SESSIONS_DEFAULT, interval=None,
-               atr_n=None) -> SwingLows | None:
+def swing_lows(bars: Sequence[Bar], each_side: SessionsEachSide = SWING_SESSIONS_DEFAULT,
+               interval: Interval | None = None,
+               atr_n: AtrPeriod | None = None) -> SwingLows | None:
     """Confirmed swing lows over a series (newest last) — or None when the series carries no usable
     candle. A swing low is a session whose low the `each_side` sessions before **and** after it did
     not reach, so it cannot be read until that many sessions have closed after it
@@ -223,31 +255,32 @@ def swing_lows(bars: Sequence[Bar], each_side=SWING_SESSIONS_DEFAULT, interval=N
     exact retest is not an undercut). Only **complete**, trusted candles with a low count: a forming
     bar's low keeps moving, so it can neither be a swing low nor undercut one, and an untrusted
     session never traded, so it is neither a candidate nor a neighbour that confirms one."""
+    _require(each_side, SessionsEachSide, "the sessions each side")
     idx = _usable(bars, "low")[-series_window(atr_n):]   # the same window ATR reads — see series_window()
     if not idx:
         return None
     usable = [bars[i] for i in idx]
     lows = [_f(b.low) for b in usable]
-    detected = []
-    for i in range(each_side, len(usable) - each_side):
+    k = each_side.value
+    detected, previous_low = [], None
+    for i in range(k, len(usable) - k):
         low = lows[i]
-        if not all(lows[j] > low for j in range(i - each_side, i + each_side + 1) if j != i):
+        if not all(lows[j] > low for j in range(i - k, i + k + 1) if j != i):
             continue
-        after = lows[i + 1:]
-        lowest_after = min(after)
+        lowest_after = min(range(i + 1, len(usable)), key=lows.__getitem__)
         detected.append(SwingLow(
             session=_day(usable[i]),
-            low_price=low,
-            higher_than_previous_row_low=None if not detected else low > detected[-1].low_price,
-            sessions_after_in_window=len(after),
-            lowest_low_in_those_sessions=lowest_after,
-            undercut_by_later_session=lowest_after < low,
+            low_price=usable[i].low,
+            higher_than_previous_row_low=None if previous_low is None else low > previous_low,
+            sessions_after_in_window=len(usable) - i - 1,
+            lowest_low_in_those_sessions=usable[lowest_after].low,
         ))
+        previous_low = low
     return SwingLows(
         each_side=each_side,
-        window_first_session=_day(usable[0]), window_last_session=_day(usable[-1]),
+        window=DateRange(_day(usable[0]), _day(usable[-1])),
         window_sessions=len(usable),
-        detectable_through=_day(usable[-(each_side + 1)]) if len(usable) > each_side else None,
+        detectable_through=_day(usable[-(k + 1)]) if len(usable) > k else None,
         detected=tuple(detected), interval=interval, quality=_window_quality(bars, idx[0]))
 
 
@@ -260,4 +293,4 @@ def last_closed(bars: Sequence[Bar]) -> LastClosed | None:
     if not idx:
         return None
     b = bars[idx[-1]]
-    return LastClosed(session=_day(b), close=_f(b.close), quality=_window_quality(bars, idx[-1]))
+    return LastClosed(session=_day(b), close=b.close, quality=_window_quality(bars, idx[-1]))

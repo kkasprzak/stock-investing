@@ -20,23 +20,25 @@ support.py              frozen clock (FROZEN_TODAY, FROZEN_DATE, FROZEN_NOW, GPW
                         or PeriodBar), bar builders (daily_bar: a DailyBar from plain numbers, trusted
                         unless trust= says otherwise; flat_bar; price: a Price; num: a Price as the
                         float the output prints), FakeSource; puts ../scripts on sys.path
-test_model.py           market_data/model.py — DateRange, Interval, Instrument, Isin, Price, Volume, DailyQuote,
-                        Trust, Status, Quality, DailyBar, PeriodBar
+test_model.py           market_data/model.py — DateRange, Interval, PeriodInterval (its periods), AtrPeriod and
+                        SessionsEachSide, Instrument, Isin, Price, Volume, DailyQuote, Trust, Status,
+                        Quality, DailyBar, PeriodBar
 test_store_file.py      market_data/store_file.py — the store's file schema: read, write, merge, StoredQuote
 test_store.py           market_data/adapters/store.py — StoreQuotes: what the store answers (every bar trusted),
                         no_store, malformed, the store ahead of a lower source in a chain
 test_import_stooq.py    market_data/importers/stooq.py and scripts/import_quotes.py — parse, snap, the real-export
                         guards and ATR pins, the importer end to end on a temp store, its usage errors
-test_indicators.py      market_data/indicators.py — _period, aggregate, last_closed, ATR, swing lows, the quality
-                        every reading carries, placeholder sessions (ADR 0002), Stooq oracle
+test_indicators.py      market_data/indicators.py — aggregate, last_closed, ATR, swing lows (the readings' derived
+                        fields and the counts they refuse), the quality every reading carries,
+                        placeholder sessions (ADR 0002), Stooq oracle
 test_quote_chain.py     market_data/quote_chain.py — QuoteChain: trust order, gap filling, sources that did not answer
 test_yahoo.py           market_data/adapters/yahoo.py — resolve, range buckets, cache, session close, backfill,
                         to_bar (row to DailyBar, an unusable price to a gap on an untrusted bar), the
                         placeholder rule, live smoke
 test_symbol_index.py    market_data/adapters/symbol_index.py — lookup by ISIN / broker ticker, broker symbol
 test_cli.py             scripts/quotes.py — build_source (the composition root), main() over an injected source,
-                        flags reaching build, to_json, the 0.4.0 and 0.6.0 output pins, placeholder
-                        sessions end to end
+                        flags reaching build, --atr/--swings counts below 1 rejected, to_json, the 0.4.0
+                        and 0.6.0 output pins, placeholder sessions end to end
 fixtures/               see below
 ```
 

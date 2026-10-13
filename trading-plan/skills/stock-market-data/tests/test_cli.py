@@ -20,7 +20,8 @@ from support import (FX, FROZEN_TODAY, FROZEN_NOW, FakeSource, daily_bar, flat_b
 import quotes
 from market_data.adapters.store import StoreQuotes
 from market_data.indicators import AtrReading, LastClosed, SwingLow, SwingLows
-from market_data.model import DateRange, Instrument, Isin, PeriodBar, Quality, Trust, Volume
+from market_data.model import (AtrPeriod, DateRange, Instrument, Interval, Isin, PeriodBar,
+                               Quality, SessionsEachSide, Trust, Volume)
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 from market_data.quote_chain import QuoteChain
@@ -270,36 +271,55 @@ class TestToJson(unittest.TestCase):
                                                                 "2026-10-09"]})
 
     def test_last_closed(self):
-        self.assertEqual(self.dumped(LastClosed(date(2026, 7, 24), 156.0, Quality.GOOD)),
+        self.assertEqual(self.dumped(LastClosed(date(2026, 7, 24), price(156), Quality.GOOD)),
                          {"date": "2026-07-24", "c": 156.0, "status": "good",
                           "excluded_sessions": []})
 
     def test_a_reading_left_without_sessions_is_uncertain_and_names_them(self):
-        lc = LastClosed(date(2026, 10, 2), 102.0, Quality((date(2026, 10, 6), date(2026, 10, 5))))
+        lc = LastClosed(date(2026, 10, 2), price(102),
+                        Quality((date(2026, 10, 6), date(2026, 10, 5))))
         self.assertEqual(self.dumped(lc), {"date": "2026-10-02", "c": 102.0, "status": "uncertain",
                                            "excluded_sessions": ["2026-10-05", "2026-10-06"]})
 
     def test_atr_names_its_interval_only_when_it_has_one(self):
-        a = AtrReading(n=2, method="wilder", value=3.5, bars_used=5, as_of=date(2026, 1, 7),
-                       short_history=True, interval=None, quality=Quality.GOOD)
+        a = AtrReading(n=AtrPeriod(2), method="wilder", value=3.5, bars_used=5,
+                       as_of=date(2026, 1, 7), interval=None, quality=Quality.GOOD)
         self.assertEqual(self.dumped(a), {"n": 2, "method": "wilder", "value": 3.5, "bars_used": 5,
                                           "as_of": "2026-01-07", "short_history": True,
                                           "status": "good", "excluded_sessions": []})
 
+    def test_readings_print_the_intervals_label_not_its_code(self):
+        """An interval passed as Interval.WEEKLY once printed "w", the CLI flag, not "weekly"."""
+        a = AtrReading(n=AtrPeriod(2), method="wilder", value=3.5, bars_used=5,
+                       as_of=date(2026, 1, 7), interval=Interval.WEEKLY, quality=Quality.GOOD)
+        self.assertEqual(self.dumped(a)["interval"], "weekly")
+        s = SwingLows(each_side=SessionsEachSide(2),
+                      window=DateRange(date(2026, 1, 5), date(2026, 3, 2)), window_sessions=9,
+                      detectable_through=date(2026, 2, 16), detected=(),
+                      interval=Interval.DAILY, quality=Quality.GOOD)
+        self.assertEqual(list(self.dumped(s).items())[0], ("candle_interval", "daily"))
+
     def test_swing_lows_without_an_interval(self):
-        s = SwingLows(each_side=2, window_first_session=date(2026, 1, 1),
-                      window_last_session=date(2026, 1, 9), window_sessions=9,
-                      detectable_through=None,
-                      detected=(SwingLow(date(2026, 1, 3), 8.0, None, 6, 7.0, True),),
+        s = SwingLows(each_side=SessionsEachSide(2),
+                      window=DateRange(date(2026, 1, 1), date(2026, 1, 9)), window_sessions=9,
+                      detectable_through=date(2026, 1, 7),
+                      detected=(SwingLow(date(2026, 1, 3), price(8), None, 6, price(7)),),
                       interval=None, quality=Quality.GOOD)
         self.assertEqual(self.dumped(s), {
             "sessions_each_side_with_higher_lows": 2, "window_first_session": "2026-01-01",
-            "window_last_session": "2026-01-09", "window_sessions": 9, "detectable_through": None,
+            "window_last_session": "2026-01-09", "window_sessions": 9,
+            "detectable_through": "2026-01-07",
             "detected": [{"date": "2026-01-03", "low_price": 8.0,
                           "higher_than_previous_row_low": None, "sessions_after_in_window": 6,
                           "lowest_low_in_those_sessions": 7.0,
                           "undercut_by_later_session": True}],
             "status": "good", "excluded_sessions": []})
+
+    def test_swing_lows_too_short_to_confirm_have_no_edge(self):
+        s = SwingLows(each_side=SessionsEachSide(2),
+                      window=DateRange(date(2026, 1, 1), date(2026, 1, 2)), window_sessions=2,
+                      detectable_through=None, detected=(), interval=None, quality=Quality.GOOD)
+        self.assertIsNone(self.dumped(s)["detectable_through"])
 
     def test_anything_else_is_not_serializable(self):
         with self.assertRaises(TypeError):
@@ -452,6 +472,43 @@ class TestPlaceholderSessionsEndToEnd(unittest.TestCase):
         self.assertEqual(week, {"date": "2026-10-05", "o": None, "h": None, "l": None, "c": None,
                                 "v": None, "complete": True, "status": "no_value",
                                 "excluded_sessions": [d.isoformat() for d in self.GAP]})
+
+
+class TestCountFlags(unittest.TestCase):
+    """--atr N and --swings N are counts of at least 1, checked where argv is read. Before, --atr -3
+    printed a negative ATR as settled, --atr 0 quietly printed none, and --swings -1 crashed."""
+
+    def output(self, *argv):
+        source = quotes.build_source(False, fetch=lambda sym, rng: (load_yahoo("PKN"), None),
+                                     sleep=lambda s: None)
+        return run(["PKN.PL", *argv], source)["quotes"]["PKN.PL"]
+
+    def test_a_count_below_one_is_rejected_before_anything_runs(self):
+        for argv in (["--atr", "0"], ["--atr", "-3"], ["--swings", "0"], ["--swings", "-1"],
+                     ["--atr", "x"]):
+            src = FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
+            err = io.StringIO()
+            with self.subTest(argv=argv), contextlib.redirect_stderr(err), \
+                    self.assertRaises(SystemExit) as exit_:
+                run(["PKN.PL", *argv], src)
+            self.assertEqual(exit_.exception.code, 2)
+            self.assertEqual(src.asked, [])
+            self.assertIn("at least 1", err.getvalue())
+
+    def test_bare_flags_take_the_defaults(self):
+        rec = self.output("--atr", "--swings")
+        self.assertEqual((rec["atr"]["n"], rec["swing_lows"]["sessions_each_side_with_higher_lows"]),
+                         (14, 2))
+
+    def test_a_given_count_is_used(self):
+        rec = self.output("--atr", "10", "--swings", "3")
+        self.assertEqual((rec["atr"]["n"], rec["swing_lows"]["sessions_each_side_with_higher_lows"]),
+                         (10, 3))
+
+    def test_omitted_flags_print_neither_block(self):
+        rec = self.output()
+        self.assertNotIn("atr", rec)
+        self.assertNotIn("swing_lows", rec)
 
 
 class TestFlagsReachTheCompositionRoot(unittest.TestCase):

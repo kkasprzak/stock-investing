@@ -23,6 +23,8 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data
 ```
 
 Always pass `--store` exactly as above: it points at this project's own candle store (next section).
+A value given to `--atr` or `--swings` must be a whole number of at least 1; anything else exits 2
+before anything is fetched.
 
 Input is **broker tickers** (`.PL` / `.DE` / `.US`) — the same symbols the state files use — or an
 **ISIN** (resolved via the same map; handy for index-membership callers). You never pass

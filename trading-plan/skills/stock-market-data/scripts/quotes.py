@@ -32,7 +32,8 @@ from market_data.indicators import (ATR_DEFAULT_N, SWING_SESSIONS_DEFAULT,   # n
                                     AtrReading, LastClosed, SwingLow, SwingLows, aggregate,
                                     atr_wilder, bars_needed, calendar_days, last_closed,
                                     swing_lows)
-from market_data.model import DailyBar, DateRange, Interval, PeriodBar   # noqa: E402
+from market_data.model import (AtrPeriod, DailyBar, DateRange, Interval, PeriodBar,   # noqa: E402
+                               PeriodInterval, SessionsEachSide)
 from market_data.ports import QuoteSource, QuoteSourceUnavailableError   # noqa: E402
 from market_data.quote_chain import QuoteChain              # noqa: E402
 
@@ -62,18 +63,20 @@ def build_source(cache: bool, *, store_dir: Path | None = None, cache_dir: Path 
     return QuoteChain([*store, yahoo_source])
 
 
-def quote_record(daily, interval, bars, today: date, atr_n=None, swings=None):
+def quote_record(daily, interval, bars, today: date, atr_n: AtrPeriod | None = None,
+                 swings: SessionsEachSide | None = None):
     """The per-symbol payload: the last `bars` candles of `interval`, the last closed one, and
     optionally ATR and the swing lows. The last closed candle and both derived blocks are read over
     the **whole** fetched series, not the returned slice — see bars_needed(). Values are types;
     to_json prints them."""
     interval = Interval(interval)
-    series = daily if interval is Interval.DAILY else aggregate(daily, interval, today)
+    series = (daily if interval is Interval.DAILY
+              else aggregate(daily, PeriodInterval(interval), today))
     rec = {"last_closed": last_closed(series), "bars": series[-bars:]}
-    if atr_n:
-        rec["atr"] = atr_wilder(series, atr_n, interval.label)
-    if swings:
-        rec["swing_lows"] = swing_lows(series, swings, interval.label, atr_n)
+    if atr_n is not None:
+        rec["atr"] = atr_wilder(series, atr_n, interval)
+    if swings is not None:
+        rec["swing_lows"] = swing_lows(series, swings, interval, atr_n)
     return rec
 
 
@@ -107,30 +110,33 @@ def to_json(obj):
         return {"date": obj.period_start.isoformat(), **_ohlcv(obj),
                 **_quality(obj.status, obj.quality)}
     if isinstance(obj, LastClosed):
-        return {"date": obj.session.isoformat(), "c": obj.close,
+        return {"date": obj.session.isoformat(), "c": _num(obj.close),
                 **_quality(obj.quality.status, obj.quality)}
     if isinstance(obj, AtrReading):
-        rec = {"n": obj.n, "method": obj.method, "value": obj.value, "bars_used": obj.bars_used,
-               "as_of": obj.as_of.isoformat(), "short_history": obj.short_history}
-        if obj.interval:
-            rec["interval"] = obj.interval
+        rec = {"n": obj.n.value, "method": obj.method, "value": obj.value,
+               "bars_used": obj.bars_used, "as_of": obj.as_of.isoformat(),
+               "short_history": obj.short_history}
+        if obj.interval is not None:
+            rec["interval"] = obj.interval.label
         return {**rec, **_quality(obj.quality.status, obj.quality)}
     if isinstance(obj, SwingLow):
-        return {"date": obj.session.isoformat(), "low_price": obj.low_price,
+        return {"date": obj.session.isoformat(), "low_price": _num(obj.low_price),
                 "higher_than_previous_row_low": obj.higher_than_previous_row_low,
                 "sessions_after_in_window": obj.sessions_after_in_window,
-                "lowest_low_in_those_sessions": obj.lowest_low_in_those_sessions,
+                "lowest_low_in_those_sessions": _num(obj.lowest_low_in_those_sessions),
                 "undercut_by_later_session": obj.undercut_by_later_session}
     if isinstance(obj, SwingLows):
         through = obj.detectable_through
-        rec = {"sessions_each_side_with_higher_lows": obj.each_side,
-               "window_first_session": obj.window_first_session.isoformat(),
-               "window_last_session": obj.window_last_session.isoformat(),
+        rec = {"sessions_each_side_with_higher_lows": obj.each_side.value,
+               "window_first_session": obj.window.start.isoformat(),
+               "window_last_session": obj.window.end.isoformat(),
                "window_sessions": obj.window_sessions,
                "detectable_through": through.isoformat() if through else None,
                "detected": [to_json(r) for r in obj.detected],
                **_quality(obj.quality.status, obj.quality)}
-        return {"candle_interval": obj.interval, **rec} if obj.interval else rec
+        if obj.interval is None:
+            return rec
+        return {"candle_interval": obj.interval.label, **rec}
     raise TypeError(f"{type(obj).__name__} is not part of the output contract")
 
 
@@ -177,6 +183,18 @@ def _store_dir(text: str) -> Path:
     return path
 
 
+def _count(cls, unit):
+    """An argparse type for --atr / --swings: a whole number of at least 1, as `cls`, so a count
+    that would print a negative ATR or crash the swing scan never gets past argv."""
+    def parse(text: str):
+        try:
+            return cls(int(text))
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"{text!r} is not a whole number of {unit} of at least 1") from None
+    return parse
+
+
 def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
          today: date | None = None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -185,12 +203,13 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
                     help="candle interval: d=daily (default), w=weekly, m=monthly")
     ap.add_argument("--bars", type=int, default=DEFAULT_BARS, metavar="N",
                     help=f"bars returned per symbol (default {DEFAULT_BARS})")
-    ap.add_argument("--atr", type=int, nargs="?", const=ATR_DEFAULT_N, default=None, metavar="N",
+    ap.add_argument("--atr", type=_count(AtrPeriod, "candles"), nargs="?", const=ATR_DEFAULT_N,
+                    default=None, metavar="N",
                     help=f"also report Wilder ATR(N) on the chosen interval (bare --atr = "
                          f"{ATR_DEFAULT_N}); widens the fetch to cover ATR's run-up, so the value "
                          f"never depends on --bars")
-    ap.add_argument("--swings", type=int, nargs="?", const=SWING_SESSIONS_DEFAULT, default=None,
-                    metavar="N",
+    ap.add_argument("--swings", type=_count(SessionsEachSide, "sessions each side"), nargs="?",
+                    const=SWING_SESSIONS_DEFAULT, default=None, metavar="N",
                     help=f"also report confirmed swing lows on the chosen interval, N sessions each "
                          f"side (bare --swings = {SWING_SESSIONS_DEFAULT}); reads the same window as "
                          f"ATR, so both describe one stretch of history")

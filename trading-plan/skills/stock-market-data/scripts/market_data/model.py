@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from enum import Enum
 from typing import ClassVar, Mapping
@@ -258,3 +258,63 @@ class Interval(str, Enum):
 
 _LABEL = {Interval.DAILY: "daily", Interval.WEEKLY: "weekly", Interval.MONTHLY: "monthly"}
 _CALENDAR_FACTOR = {Interval.DAILY: 1.5, Interval.WEEKLY: 7, Interval.MONTHLY: 30}
+
+
+@dataclass(frozen=True)
+class PeriodInterval:
+    """An interval daily bars roll up into: weekly or monthly. Daily is not one, so a rollup can
+    never be asked for it."""
+
+    interval: Interval
+
+    WEEKLY: ClassVar[PeriodInterval]
+    MONTHLY: ClassVar[PeriodInterval]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.interval, Interval) or self.interval is Interval.DAILY:
+            raise ValueError(f"{self.interval!r} is not a weekly or monthly Interval")
+
+    def period(self, session: date) -> DateRange:
+        """The period a session falls in: Monday..Friday, or the 1st..month-end. Its start labels
+        the period's bar; its end is the last session that can close it."""
+        if self.interval is Interval.WEEKLY:
+            monday = session - timedelta(days=session.weekday())
+            return DateRange(monday, monday + timedelta(days=4))
+        nxt = (date(session.year + 1, 1, 1) if session.month == 12
+               else date(session.year, session.month + 1, 1))
+        return DateRange(date(session.year, session.month, 1), nxt - timedelta(days=1))
+
+
+PeriodInterval.WEEKLY = PeriodInterval(Interval.WEEKLY)
+PeriodInterval.MONTHLY = PeriodInterval(Interval.MONTHLY)
+
+
+def _at_least_one(value: object, what: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError(f"{what} {value!r} is not a whole number of at least 1")
+
+
+@dataclass(frozen=True)
+class AtrPeriod:
+    """How many candles Wilder's ATR averages over (its n)."""
+
+    value: int
+
+    def __post_init__(self) -> None:
+        _at_least_one(self.value, "ATR period")
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+@dataclass(frozen=True)
+class SessionsEachSide:
+    """How many sessions on each side of a swing low must have traded higher to confirm it."""
+
+    value: int
+
+    def __post_init__(self) -> None:
+        _at_least_one(self.value, "sessions each side")
+
+    def __str__(self) -> str:
+        return str(self.value)

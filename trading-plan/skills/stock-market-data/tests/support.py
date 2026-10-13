@@ -22,7 +22,8 @@ if SCRIPTS not in sys.path:
 
 from market_data.adapters import yahoo              # noqa: E402  (needs SCRIPTS on sys.path)
 from market_data.indicators import aggregate        # noqa: E402
-from market_data.model import DailyBar, Price, Trust, Volume   # noqa: E402
+from market_data.model import (DailyBar, Interval, PeriodInterval, Price, Trust,   # noqa: E402
+                               Volume)
 
 FROZEN_TODAY = "2026-07-25"          # a Saturday; last session in fixtures is Fri 2026-07-24
 FROZEN_DATE = date.fromisoformat(FROZEN_TODAY)
@@ -96,7 +97,7 @@ def pipeline(ticker, interval):
     daily = [yahoo.to_bar(r) for r in rows]
     if interval == "d":
         return daily
-    return aggregate(daily, interval, FROZEN_DATE)
+    return aggregate(daily, PeriodInterval(Interval(interval)), FROZEN_DATE)
 
 
 def load_stooq(ticker, interval):
