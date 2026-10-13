@@ -1,5 +1,5 @@
-"""Shared test support for stock-market-data: frozen clock, fixture loaders, tolerances, a fake
-QuoteSource.
+"""Shared test support for stock-market-data: frozen clock, fixture loaders, tolerances, bar
+builders, a fake QuoteSource.
 
 Importing this module puts ../scripts on sys.path, so test files can `import quotes` and
 `import market_data...` after `import support`. Named support, not fixtures: fixtures/ is the
@@ -12,6 +12,7 @@ import json
 import os
 import sys
 from datetime import date, timedelta
+from decimal import Decimal
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FX = os.path.join(HERE, "fixtures")
@@ -21,8 +22,11 @@ if SCRIPTS not in sys.path:
 
 from market_data.adapters import yahoo              # noqa: E402  (needs SCRIPTS on sys.path)
 from market_data.indicators import aggregate        # noqa: E402
+from market_data.model import (DailyBar, Interval, PeriodInterval, Price, Trust,   # noqa: E402
+                               Volume)
 
 FROZEN_TODAY = "2026-07-25"          # a Saturday; last session in fixtures is Fri 2026-07-24
+FROZEN_DATE = date.fromisoformat(FROZEN_TODAY)
 FROZEN_NOW = 1784973600              # that Saturday 12:00 Warsaw — epoch for session-close checks
 GPW_CLOSE = 17 * 3600 + 5 * 60       # WSE regular session ends 17:05 local (per Yahoo's own calendar)
 
@@ -46,6 +50,29 @@ def load_yahoo(ticker):
         return json.load(f)
 
 
+def price(x):
+    """A Price from a number written in the test (10, 11.5, "107.50"); None stays None."""
+    return None if x is None else Price(Decimal(str(x)))
+
+
+def daily_bar(day, o=None, h=None, l=None, c=None, v=None, *, complete=True,  # noqa: E741
+              source="yahoo", trust=Trust.TRUSTED):
+    """A DailyBar from plain numbers; `day` is ISO text. A field left out is a gap (None)."""
+    return DailyBar(session=date.fromisoformat(day), open=price(o), high=price(h), low=price(l),
+                    close=price(c), volume=None if v is None else Volume(v), complete=complete,
+                    source=source, trust=trust)
+
+
+def flat_bar(day, close, source="yahoo"):
+    """A closed session at one price, volume 1: enough for tests about order and provenance."""
+    return daily_bar(day, close, close, close, close, 1, source=source)
+
+
+def num(p):
+    """A Price as the float the output prints; None stays None."""
+    return None if p is None else float(p.value)
+
+
 class FakeSource:
     """A QuoteSource giving every instrument the same answer, or raising `error`."""
 
@@ -65,11 +92,12 @@ class FakeSource:
 
 
 def pipeline(ticker, interval):
-    """Run the offline pipeline for a fixture at FROZEN_TODAY -> list of bars."""
-    daily = yahoo.build_daily(load_yahoo(ticker), today=FROZEN_TODAY, now=FROZEN_NOW)
+    """Run the offline pipeline for a fixture at FROZEN_TODAY -> list of DailyBar or PeriodBar."""
+    rows = yahoo.build_daily(load_yahoo(ticker), today=FROZEN_TODAY, now=FROZEN_NOW)
+    daily = [yahoo.to_bar(r) for r in rows]
     if interval == "d":
         return daily
-    return aggregate(daily, interval, FROZEN_TODAY)
+    return aggregate(daily, PeriodInterval(Interval(interval)), FROZEN_DATE)
 
 
 def load_stooq(ticker, interval):

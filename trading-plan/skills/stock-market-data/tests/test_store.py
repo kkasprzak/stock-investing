@@ -13,9 +13,9 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from support import FX, FakeSource
+from support import FX, FakeSource, flat_bar, num
 from market_data.adapters.store import StoreQuotes
-from market_data.model import DateRange, Instrument, Isin
+from market_data.model import DailyBar, DateRange, Instrument, Isin, Price, Trust, Volume
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 from market_data.quote_chain import QuoteChain
@@ -29,7 +29,7 @@ PKN_RESOLVED = (Resolution("store", "PLPKN0000018", ResolvedBy.ISIN),)
 
 
 def dates(series):
-    return [b["date"] for b in series.bars]
+    return [b.session.isoformat() for b in series.bars]
 
 
 class TestStoreQuotes(unittest.TestCase):
@@ -40,10 +40,16 @@ class TestStoreQuotes(unittest.TestCase):
         s = StoreQuotes(STORE).daily(PKN, PERIOD, now=NOW)
         self.assertEqual(dates(s), ["2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07",
                                     "2026-10-08", "2026-10-09"])
-        self.assertEqual(s.bars[-1], {"date": "2026-10-09", "o": 103.0, "h": 108.0, "l": 102.0,
-                                      "c": 107.5, "v": 1500000, "complete": True,
-                                      "source": "store"})
+        self.assertEqual(s.bars[-1], DailyBar(date(2026, 10, 9), Price.parse("103"),
+                                              Price.parse("108"), Price.parse("102"),
+                                              Price.parse("107.50"), Volume(1500000),
+                                              complete=True, source="store", trust=Trust.TRUSTED))
         self.assertEqual(s.unavailable, ())
+
+    def test_source_is_the_adapter_not_the_provider(self):
+        """The file's rows say stooq; the bar names who served it."""
+        s = StoreQuotes(STORE).daily(PKN, PERIOD, now=NOW)
+        self.assertEqual({b.source for b in s.bars}, {"store"})
 
     def test_nothing_after_the_period_end(self):
         s = StoreQuotes(STORE).daily(PKN, DateRange(date(2026, 9, 28), date(2026, 10, 7)), now=NOW)
@@ -57,7 +63,7 @@ class TestStoreQuotes(unittest.TestCase):
 
     def test_every_bar_is_the_stores_and_complete(self):
         s = StoreQuotes(STORE).daily(PKN, PERIOD, now=NOW)
-        self.assertEqual({(b["source"], b["complete"]) for b in s.bars}, {(StoreQuotes.name, True)})
+        self.assertEqual({(b.source, b.complete) for b in s.bars}, {(StoreQuotes.name, True)})
 
     def test_resolves_by_isin(self):
         self.assertEqual(StoreQuotes(STORE).daily(PKN, PERIOD, now=NOW).resolved, PKN_RESOLVED)
@@ -65,6 +71,17 @@ class TestStoreQuotes(unittest.TestCase):
     def test_isin_without_a_file_is_an_empty_answer_that_still_says_what_it_looked_for(self):
         s = StoreQuotes(STORE).daily(PEO, PERIOD, now=NOW)
         self.assertEqual(s, QuoteSeries((), (Resolution("store", "PLPEKAO00016", ResolvedBy.ISIN),)))
+
+    def test_every_bar_is_trusted_even_one_shaped_like_a_vendor_placeholder(self):
+        """Only closed sessions someone imported are stored (ADR 0000): the store vouches for each.
+        A flat row with no volume is Yahoo's placeholder shape, and that rule is Yahoo's alone."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "PLPKN0000018.csv").write_text("date,open,high,low,close,volume,source\n"
+                                              "2026-10-08,107,107,107,107,0,stooq\n"
+                                              "2026-10-09,103,108,102,107.50,1500000,stooq\n")
+        s = StoreQuotes(tmp).daily(PKN, PERIOD, now=NOW)
+        self.assertEqual([b.trust for b in s.bars], [Trust.TRUSTED, Trust.TRUSTED])
 
     def test_unmapped_instrument_is_an_empty_answer(self):
         s = StoreQuotes(STORE).daily(Instrument.unmapped("XXXX.PL"), PERIOD, now=NOW)
@@ -103,13 +120,10 @@ class TestStoreDidNotAnswer(unittest.TestCase):
 
 class TestStoreInAChain(unittest.TestCase):
     def test_store_wins_a_shared_date_and_the_lower_source_fills_the_rest(self):
-        def bar(day, close):
-            return {"date": day, "o": close, "h": close, "l": close, "c": close, "v": 1,
-                    "complete": True, "source": "yahoo"}
-
-        yahoo = FakeSource(QuoteSeries((bar("2026-10-09", 99.0), bar("2026-10-12", 110.0)), ()))
+        yahoo = FakeSource(QuoteSeries((flat_bar("2026-10-09", 99.0),
+                                        flat_bar("2026-10-12", 110.0)), ()))
         s = QuoteChain([StoreQuotes(STORE), yahoo]).daily(PKN, PERIOD, now=NOW)
-        self.assertEqual([(b["date"], b["c"], b["source"]) for b in s.bars[-2:]],
+        self.assertEqual([(b.session.isoformat(), num(b.close), b.source) for b in s.bars[-2:]],
                          [("2026-10-09", 107.5, "store"), ("2026-10-12", 110.0, "yahoo")])
 
 

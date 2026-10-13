@@ -14,13 +14,13 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from support import FX, FROZEN_TODAY, FROZEN_NOW, GPW_CLOSE, warsaw, load_yahoo
+from support import FX, FROZEN_TODAY, FROZEN_NOW, GPW_CLOSE, num, price, warsaw, load_yahoo
 import quotes
 from market_data.adapters import yahoo
 from market_data.adapters.symbol_index import SymbolIndex
 from market_data.adapters.yahoo import YahooQuotes, range_days, range_for_days
-from market_data.indicators import calendar_days, last_closed
-from market_data.model import DateRange, Instrument
+from market_data.indicators import LastClosed, calendar_days, last_closed
+from market_data.model import DailyBar, DateRange, Instrument, Quality, Trust, Volume
 from market_data.ports import QuoteSourceUnavailableError, Resolution, ResolvedBy, SourceFailure
 
 INDEX = SymbolIndex(quotes.SYMBOLS)
@@ -39,6 +39,9 @@ ONE_MONTH, ONE_YEAR, TWO_YEARS = 20, 300, 500   # "1mo" <= 31, "1y" 184-365, "2y
 
 def no_sleep(_seconds):
     pass
+
+
+UNUSABLE = Trust.untrusted("unusable_price")
 
 
 class TestResolve(unittest.TestCase):
@@ -155,7 +158,7 @@ class TestCache(unittest.TestCase):
                        "session_end": None, "session_over": False, "daily": daily}, f)
         bars = self.daily(ONE_YEAR).bars
         self.assertEqual(self.calls, [])                          # a hit, not a refetch
-        self.assertEqual({b["source"] for b in bars}, {"yahoo"})
+        self.assertEqual({b.source for b in bars}, {"yahoo"})
 
     def test_symbol_with_path_separator_is_flattened_into_one_file(self):
         """A vendor symbol containing os.sep must not escape into a subdirectory of the cache."""
@@ -179,7 +182,7 @@ class TestDaily(unittest.TestCase):
         s = self.source(lambda sym, rng: (load_yahoo("PKN"), None)).daily(
             PKN, period(ONE_YEAR), now=FROZEN_NOW)
         self.assertTrue(s.bars)
-        self.assertEqual({b["source"] for b in s.bars}, {"yahoo"})
+        self.assertEqual({(b.source, b.trust) for b in s.bars}, {("yahoo", Trust.TRUSTED)})
         self.assertEqual(s.resolved, (Resolution("yahoo", "PKN.WA", ResolvedBy.SYMBOLS_JSON),))
 
     def test_description_is_the_header_text_of_0_4_0(self):    # the output header names the chain
@@ -277,9 +280,10 @@ class TestSessionClose(unittest.TestCase):
         self.assertTrue(b["complete"])
 
     def test_last_closed_is_todays_candle_after_the_close(self):
-        bars = yahoo.build_daily(self.raw(warsaw(2026, 7, 28, GPW_CLOSE)),
+        rows = yahoo.build_daily(self.raw(warsaw(2026, 7, 28, GPW_CLOSE)),
                                  now=warsaw(2026, 7, 28, 23 * 3600))
-        self.assertEqual(last_closed(bars), {"date": "2026-07-28", "c": 144.84})
+        self.assertEqual(last_closed([yahoo.to_bar(r) for r in rows]),
+                         LastClosed(self.DAY, price("144.84"), Quality.GOOD))
 
     def _cached(self, write_at, read_at, midday, final):
         """Write the cache at `write_at` from `midday`, read it at `read_at` (live would give `final`).
@@ -307,8 +311,8 @@ class TestSessionClose(unittest.TestCase):
         bars, src = self._cached(warsaw(2026, 7, 28, 12 * 3600), warsaw(2026, 7, 28, 23 * 3600),
                                  midday, final)
         self.assertEqual(src, "live")                       # crossing the close invalidates
-        self.assertEqual(bars[-1]["c"], 144.84)             # the real close, not the snapshot
-        self.assertTrue(bars[-1]["complete"])
+        self.assertEqual(num(bars[-1].close), 144.84)       # the real close, not the snapshot
+        self.assertTrue(bars[-1].complete)
 
     def test_cache_written_after_the_close_is_reused(self):
         """Same side of the close: the candle is final, so the entry stays good (that's the point of
@@ -318,8 +322,8 @@ class TestSessionClose(unittest.TestCase):
         bars, src = self._cached(warsaw(2026, 7, 28, 18 * 3600), warsaw(2026, 7, 28, 23 * 3600),
                                  final, other)
         self.assertEqual(src, "cache")
-        self.assertEqual(bars[-1]["c"], 144.84)
-        self.assertTrue(bars[-1]["complete"])
+        self.assertEqual(num(bars[-1].close), 144.84)
+        self.assertTrue(bars[-1].complete)
 
     def test_midsession_cache_is_reused_within_the_session(self):
         """Two mid-session reads still hit: --cache means 'reuse the day's candles', and the forming
@@ -329,7 +333,7 @@ class TestSessionClose(unittest.TestCase):
         bars, src = self._cached(warsaw(2026, 7, 28, 11 * 3600), warsaw(2026, 7, 28, 12 * 3600),
                                  midday, self.raw(close, price=148.0))
         self.assertEqual(src, "cache")
-        self.assertFalse(bars[-1]["complete"])
+        self.assertFalse(bars[-1].complete)
 
     def test_preopen_cache_is_not_reused_after_the_close(self):
         """Written before the open (no bar for today yet) -> after the close it must refetch, or the
@@ -348,9 +352,9 @@ class TestSessionClose(unittest.TestCase):
         self.assertFalse(yahoo.build_daily(self.raw(None), now=write_at)[-1]["complete"])
         bars, src = self._cached(write_at, read_at, self.raw(None), self.raw(None, price=999.0))
         self.assertEqual(src, "cache")
-        self.assertEqual(bars[-1]["date"], "2026-07-28")
-        self.assertEqual(bars[-1]["c"], 144.84)
-        self.assertTrue(bars[-1]["complete"])
+        self.assertEqual(bars[-1].session, self.DAY)
+        self.assertEqual(num(bars[-1].close), 144.84)
+        self.assertTrue(bars[-1].complete)
 
 
 class TestBuildDailyBackfill(unittest.TestCase):
@@ -368,6 +372,142 @@ class TestBuildDailyBackfill(unittest.TestCase):
         self.assertEqual(bars[-1]["date"], "2026-07-24")
         self.assertEqual(bars[-1]["c"], 156.0)          # backfilled
         self.assertTrue(bars[-1]["complete"])           # 07-24 < 07-25
+
+
+class TestToBar(unittest.TestCase):
+    """A row of build_daily (or of the cache) as the port's DailyBar. Whatever Yahoo sends, this
+    must not raise: an exception out of an adapter is a bug, not an answer."""
+
+    ROW = {"date": "2026-07-24", "o": 155.7, "h": 156.3, "l": 153.42, "c": 156.0, "v": 1516341,
+           "complete": True}
+
+    def test_row_becomes_a_trusted_yahoo_bar(self):
+        self.assertEqual(yahoo.to_bar(self.ROW),
+                         DailyBar(date(2026, 7, 24), price(155.7), price(156.3), price(153.42),
+                                  price(156.0), Volume(1516341), complete=True, source="yahoo",
+                                  trust=Trust.TRUSTED))
+
+    def test_a_price_reads_back_as_the_same_float(self):
+        bar = yahoo.to_bar(dict(self.ROW, c=144.8400001))
+        self.assertEqual(num(bar.close), 144.84)            # rounded to 4 places, like build_daily
+
+    def test_zero_prices_from_yahoo_become_gaps_not_an_exception(self):
+        """Yahoo sometimes sends 0 for open/high/low. A Price is positive, so 0 is no price."""
+        bar = yahoo.to_bar(dict(self.ROW, o=0, h=0.0, l=0.00001))   # the last rounds to 0.0
+        self.assertEqual((bar.open, bar.high, bar.low, bar.close),
+                         (None, None, None, price(156.0)))
+
+    def test_negative_or_non_finite_numbers_become_gaps(self):
+        bar = yahoo.to_bar(dict(self.ROW, o=-1.0, h=float("nan"), l=float("inf"), v=-5))
+        self.assertEqual((bar.open, bar.high, bar.low, bar.volume), (None, None, None, None))
+        self.assertIsNone(yahoo.to_bar(dict(self.ROW, v=float("inf"))).volume)
+
+    def test_a_price_yahoo_sent_but_that_is_no_price_makes_the_session_untrusted(self):
+        """The gap is not silent: Yahoo said something about the session that cannot be read."""
+        for bad in (0, 0.0, 0.00001, -1.0, float("nan"), float("inf")):
+            for k in ("o", "h", "l", "c"):
+                with self.subTest(field=k, value=bad):
+                    self.assertEqual(yahoo.to_bar(dict(self.ROW, **{k: bad})).trust, UNUSABLE)
+
+    def test_a_price_yahoo_did_not_send_is_a_gap_on_a_trusted_session(self):
+        for k in ("o", "h", "l", "c"):
+            with self.subTest(field=k):
+                bar = yahoo.to_bar(dict(self.ROW, **{k: None}))
+                self.assertEqual((getattr(bar, {"o": "open", "h": "high", "l": "low",
+                                                "c": "close"}[k]), bar.trust), (None, Trust.TRUSTED))
+
+    def test_an_unusable_volume_alone_keeps_the_session_trusted(self):
+        self.assertEqual(yahoo.to_bar(dict(self.ROW, v=-5)).trust, Trust.TRUSTED)
+
+    def test_a_flat_session_at_zero_with_no_volume_is_unusable_not_a_placeholder(self):
+        """Flat with no volume, but at a price that is no price: there is no price to have filled
+        the session with, so the unreadable number is the reason."""
+        bar = yahoo.to_bar(dict(self.ROW, o=0, h=0, l=0, c=0, v=0))
+        self.assertEqual((bar.close, bar.trust), (None, UNUSABLE))
+
+    def test_a_whole_number_close_prints_as_a_float(self):
+        self.assertEqual(quotes.to_json(yahoo.to_bar(dict(self.ROW, c=156)))["c"], 156.0)
+
+    def test_zero_prices_through_the_port(self):
+        r = load_yahoo("PKN")
+        q = r["indicators"]["quote"][0]
+        for k in ("open", "high", "low"):
+            q[k] = [0 for _ in q[k]]
+        s = YahooQuotes(fetch=lambda sym, rng: (r, None), throttle=0, sleep=no_sleep).daily(
+            PKN, period(ONE_YEAR), now=FROZEN_NOW)
+        self.assertTrue(s.bars)
+        self.assertEqual({(b.open, b.high, b.low) for b in s.bars}, {(None, None, None)})
+        self.assertTrue(all(b.close is not None for b in s.bars))
+        self.assertEqual({b.trust for b in s.bars}, {UNUSABLE})
+
+
+PLACEHOLDER = Trust.untrusted("placeholder")
+
+
+class TestPlaceholder(unittest.TestCase):
+    """Yahoo fills a session it has no trades for with one price in all four fields and no volume.
+    The adapter does not guess that session's price and does not drop it: it marks it untrusted.
+    The rule looks at the bar alone, never at the session before it."""
+
+    ROW = {"date": "2026-07-24", "o": 155.7, "h": 156.3, "l": 153.42, "c": 156.0, "v": 1516341,
+           "complete": True}
+
+    def flat(self, p=156.0, v=0, **row):
+        return {**self.ROW, "o": p, "h": p, "l": p, "c": p, "v": v, **row}
+
+    def response(self, rows):
+        """A Yahoo chart response holding `rows` ((o, h, l, c, v) per session from 07-20 on)."""
+        day0 = (date(2026, 7, 20) - date(1970, 1, 1)).days * 86400 + 7 * 3600
+        cols = list(zip(*rows))
+        return {"meta": {"gmtoffset": 7200},
+                "timestamp": [day0 + i * 86400 for i in range(len(rows))],
+                "indicators": {"quote": [dict(zip(("open", "high", "low", "close", "volume"),
+                                                  map(list, cols)))]}}
+
+    def test_flat_bar_without_volume_is_an_untrusted_placeholder(self):
+        bar = yahoo.to_bar(self.flat())
+        self.assertEqual(bar.trust, PLACEHOLDER)
+        self.assertEqual(num(bar.close), 156.0)              # marked, not guessed or dropped
+
+    def test_missing_volume_counts_as_none_traded(self):
+        self.assertEqual(yahoo.to_bar(self.flat(v=None)).trust, PLACEHOLDER)
+
+    def test_flat_bar_with_volume_is_a_real_session(self):
+        self.assertEqual(yahoo.to_bar(self.flat(v=10)).trust, Trust.TRUSTED)
+
+    def test_a_bar_with_a_range_and_no_volume_is_trusted(self):
+        self.assertEqual(yahoo.to_bar(dict(self.ROW, v=0)).trust, Trust.TRUSTED)
+
+    def test_a_bar_with_a_missing_price_is_not_a_placeholder(self):
+        """All four prices must be there and equal; a gap is a gap, not a placeholder."""
+        self.assertEqual(yahoo.to_bar(self.flat(o=None)).trust, Trust.TRUSTED)
+
+    def test_forming_flat_bar_is_judged_too(self):
+        bar = yahoo.to_bar(self.flat(complete=False))
+        self.assertEqual((bar.trust, bar.complete), (PLACEHOLDER, False))
+
+    def test_five_in_a_row_are_all_placeholders_and_so_is_the_first(self):
+        """No look at the previous close: the first bar of the answer is judged like the rest."""
+        real = (150.0, 152.0, 149.0, 151.0, 900)
+        rows = [(151.0, 151.0, 151.0, 151.0, 0)] * 5 + [real]
+        s = YahooQuotes(fetch=lambda sym, rng: (self.response(rows), None), throttle=0,
+                        sleep=no_sleep).daily(PKN, period(ONE_MONTH), now=FROZEN_NOW)
+        self.assertEqual([b.trust for b in s.bars], [PLACEHOLDER] * 5 + [Trust.TRUSTED])
+
+    def test_a_cache_hit_is_judged_as_well(self):
+        """The cache holds Yahoo's rows as they came, with no judgement in them; a hit gets one."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        rows = [self.flat(date="2026-07-23"), dict(self.ROW)]
+        self.assertNotIn("trust", rows[0])
+        with open(tmp / "PKN.WA.json", "w") as f:
+            json.dump({"market_date": FROZEN_TODAY, "range": "1y", "gmtoffset": 7200,
+                       "session_end": None, "session_over": False, "daily": rows}, f)
+        calls = []
+        s = YahooQuotes(fetch=lambda sym, rng: calls.append(sym), cache_dir=tmp, throttle=0,
+                        sleep=no_sleep).daily(PKN, period(ONE_MONTH), now=FROZEN_NOW)
+        self.assertEqual(calls, [])                               # a hit
+        self.assertEqual([b.trust for b in s.bars], [PLACEHOLDER, Trust.TRUSTED])
 
 
 @unittest.skipUnless(os.environ.get("RUN_LIVE_SMOKE"), "set RUN_LIVE_SMOKE=1 to hit live Yahoo")

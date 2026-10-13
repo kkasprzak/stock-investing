@@ -302,14 +302,14 @@ class TestRealExports(TempDir):
         # honest sessions agree with Yahoo to the grosz, so a Stooq-only series gives the same).
         # That value was taken to the grosz; the four places are a regression pin from this fixture.
         rec = self.atr(self.PEO, "PLPEKAO00016")
-        self.assertEqual((rec["as_of"], round(rec["value"], 2)), ("2026-10-09", 7.52))
-        self.assertAlmostEqual(rec["value"], 7.5209, places=4)
+        self.assertEqual((rec.as_of, round(rec.value, 2)), (date(2026, 10, 9), 7.52))
+        self.assertAlmostEqual(rec.value, 7.5209, places=4)
 
     def test_ale_atr_pin(self):
         # Regression pin, computed when this test was written (2026-10-12) from this fixture.
         rec = self.atr(self.ALE, "LU2237380790")
-        self.assertEqual(rec["as_of"], "2026-10-09")
-        self.assertAlmostEqual(rec["value"], ALE_ATR, places=4)
+        self.assertEqual(rec.as_of, date(2026, 10, 9))
+        self.assertAlmostEqual(rec.value, ALE_ATR, places=4)
 
 
 def run(argv, today=None):

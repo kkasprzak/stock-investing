@@ -93,15 +93,6 @@ def read(path: Path) -> list[StoredQuote]:
     return out
 
 
-def to_bar(stored: StoredQuote) -> dict:
-    """The row as a port bar, numbers as float/int like Yahoo's. The bar's source is the adapter
-    that served it ("store"), not the provider the row came from."""
-    q = stored.quote
-    return {"date": q.session.isoformat(), "o": float(q.open.value), "h": float(q.high.value),
-            "l": float(q.low.value), "c": float(q.close.value), "v": q.volume.value,
-            "complete": True, "source": "store"}
-
-
 NEW_FILE_MODE = 0o644       # rw-r--r--, for a file write() creates; an existing file keeps its mode
 
 

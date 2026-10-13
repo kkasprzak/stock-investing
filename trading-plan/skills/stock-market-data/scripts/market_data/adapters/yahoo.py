@@ -3,17 +3,20 @@ symbol suffixes, its range buckets and the on-disk cache of its daily series."""
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
-from market_data.model import DateRange, Instrument
+from market_data.model import DailyBar, DateRange, Instrument, Price, Trust, Volume
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 
+SOURCE = "yahoo"                                # the adapter's name, on every bar it serves
 THROTTLE = 1.5                                  # pause after each live Yahoo request (s)
 
 # Yahoo fetch-range buckets (label, calendar-day span).
@@ -131,12 +134,55 @@ def build_daily(r, today=None, now=None):
     return stamp_complete(bars, today, closed_today)
 
 
+def _price(x) -> Price | None:
+    """Yahoo's number as a Price, rounded as build_daily rounds so float(price.value) gives back the
+    same float. No price at all when it cannot be one: Yahoo sometimes sends 0 (and a tiny value
+    rounds to 0.0), and an exception out of the adapter would be a bug, not an answer."""
+    if x is None or not math.isfinite(x):
+        return None
+    x = round(x, 4)
+    return Price(Decimal(repr(x))) if x > 0 else None
+
+
+PLACEHOLDER = Trust.untrusted("placeholder")
+UNUSABLE_PRICE = Trust.untrusted("unusable_price")
+
+
+def _trust(o: Price | None, h: Price | None, l: Price | None, c: Price | None,  # noqa: E741
+           volume: Volume | None, unusable: bool) -> Trust:
+    """Yahoo fills a session it has no trades for with one price in all four fields and no volume.
+    Such a bar is marked, not repaired or dropped. The bar alone decides: no look at the session
+    before it, so the first bar of an answer and a forming one are judged the same way.
+
+    A price Yahoo sent that is no price (0, negative, not finite) marks the session too, so the gap
+    it leaves is named rather than silent; a price Yahoo did not send is a plain gap. That reason
+    comes first: a session flat at 0 has no price it could have been filled with."""
+    if unusable:
+        return UNUSABLE_PRICE
+    flat = None not in (o, h, l, c) and o == h == l == c
+    return PLACEHOLDER if flat and (volume is None or volume.value == 0) else Trust.TRUSTED
+
+
+def to_bar(row: dict) -> DailyBar:
+    """A row of build_daily (or of the cache, which holds the same rows, unjudged) as the port's
+    DailyBar, with Yahoo's judgement of it."""
+    v = row.get("v")
+    sent = [row.get(k) for k in ("o", "h", "l", "c")]
+    o, h, l, c = prices = [_price(x) for x in sent]  # noqa: E741
+    unusable = any(x is not None and p is None for x, p in zip(sent, prices))
+    volume = Volume(int(v)) if v is not None and math.isfinite(v) and v >= 0 else None
+    return DailyBar(session=date.fromisoformat(row["date"]), open=o, high=h, low=l, close=c,
+                    volume=volume, complete=row["complete"], source=SOURCE,
+                    trust=_trust(o, h, l, c, volume, unusable))
+
+
 class YahooQuotes:
     """QuoteSource over Yahoo's v8 chart endpoint. `fetch`, `sleep` and `now` are injectable so tests
     run offline; cache_dir=None (the default) never touches the disk — the fail-safe: a forgotten
-    --cache means slower, never stale."""
+    --cache means slower, never stale. Every bar it serves, live or from the cache, is judged by
+    to_bar: Yahoo's placeholder sessions come out untrusted."""
 
-    name = "yahoo"
+    name = SOURCE
     description = "Yahoo Finance v8 chart (~15 min delayed)"
 
     def __init__(self, *, fetch=fetch_chart, cache_dir: Path | None = None,
@@ -169,9 +215,7 @@ class YahooQuotes:
             raise QuoteSourceUnavailableError((SourceFailure(self.name, how),), (resolution,))
         if how == "live":
             self._sleep(self._throttle)                # throttle real fetches only
-        for b in bars:
-            b.setdefault("source", self.name)          # after the cache write: stored bars lack it
-        return QuoteSeries(tuple(bars), (resolution,))
+        return QuoteSeries(tuple(to_bar(b) for b in bars), (resolution,))
 
     def _daily(self, yahoo, rng, today, now):
         """Daily bars for `yahoo` over range `rng`. Returns (bars, "live"|"cache") on success, or

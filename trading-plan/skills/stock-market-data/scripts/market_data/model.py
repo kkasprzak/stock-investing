@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Mapping
+from typing import ClassVar, Mapping
 
 _ISIN = re.compile(r"[A-Z]{2}[A-Z0-9]{9}[0-9]")
 _PRICE = re.compile(r"[0-9]+(\.[0-9]+)?")
@@ -110,6 +110,103 @@ class DailyQuote:
 
 
 @dataclass(frozen=True)
+class Trust:
+    """Whether the source vouches for a session it reported: a fact the source states, not one
+    derived from the numbers. Untrusted always names its reason; the set of reasons is open."""
+
+    reason: str | None
+
+    TRUSTED: ClassVar[Trust]
+
+    def __post_init__(self) -> None:
+        if self.reason is None:
+            return
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError(f"untrusted reason {self.reason!r} is not a non-blank string")
+
+    @classmethod
+    def untrusted(cls, reason: str) -> Trust:
+        if reason is None:
+            raise ValueError("untrusted needs a reason")
+        return cls(reason)
+
+    @property
+    def trusted(self) -> bool:
+        return self.reason is None
+
+
+Trust.TRUSTED = Trust(None)
+
+
+class Status(str, Enum):
+    """Status of a derived value. Quality only ever gives GOOD or UNCERTAIN; NO_VALUE is what a
+    reading reports when it has no value at all."""
+
+    GOOD = "good"
+    UNCERTAIN = "uncertain"
+    NO_VALUE = "no_value"
+
+
+@dataclass(frozen=True)
+class Quality:
+    """Quality of a derived value: the sessions left out of it because they were not trusted.
+    Sorted and unique, so two qualities naming the same sessions are equal."""
+
+    excluded: tuple[date, ...]
+
+    GOOD: ClassVar[Quality]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "excluded", tuple(sorted(set(self.excluded))))
+
+    @property
+    def status(self) -> Status:
+        return Status.UNCERTAIN if self.excluded else Status.GOOD
+
+    @classmethod
+    def combine(cls, *qualities: Quality) -> Quality:
+        """Quality of a value derived from values of these qualities: every session any left out."""
+        return cls(tuple(d for q in qualities for d in q.excluded))
+
+
+Quality.GOOD = Quality(())
+
+
+@dataclass(frozen=True)
+class DailyBar:
+    """What a source said about one session. Not a quote: it holds no OHLC rules, since a source
+    may report gaps or numbers that do not add up. Whether to rely on it is trust."""
+
+    session: date
+    open: Price | None
+    high: Price | None
+    low: Price | None
+    close: Price | None
+    volume: Volume | None
+    complete: bool
+    source: str
+    trust: Trust
+
+
+@dataclass(frozen=True)
+class PeriodBar:
+    """A W1/MN candle rolled up from daily bars: a derived value, so it carries quality."""
+
+    period_start: date
+    open: Price | None
+    high: Price | None
+    low: Price | None
+    close: Price | None
+    volume: Volume | None
+    complete: bool
+    quality: Quality
+
+    @property
+    def status(self) -> Status:
+        return Status.NO_VALUE if self.close is None else self.quality.status
+
+
+@dataclass(frozen=True)
 class Instrument:
     """One tradable instrument as the caller named it. Not hashable (holds a Mapping); nobody keys
     by it."""
@@ -161,3 +258,63 @@ class Interval(str, Enum):
 
 _LABEL = {Interval.DAILY: "daily", Interval.WEEKLY: "weekly", Interval.MONTHLY: "monthly"}
 _CALENDAR_FACTOR = {Interval.DAILY: 1.5, Interval.WEEKLY: 7, Interval.MONTHLY: 30}
+
+
+@dataclass(frozen=True)
+class PeriodInterval:
+    """An interval daily bars roll up into: weekly or monthly. Daily is not one, so a rollup can
+    never be asked for it."""
+
+    interval: Interval
+
+    WEEKLY: ClassVar[PeriodInterval]
+    MONTHLY: ClassVar[PeriodInterval]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.interval, Interval) or self.interval is Interval.DAILY:
+            raise ValueError(f"{self.interval!r} is not a weekly or monthly Interval")
+
+    def period(self, session: date) -> DateRange:
+        """The period a session falls in: Monday..Friday, or the 1st..month-end. Its start labels
+        the period's bar; its end is the last session that can close it."""
+        if self.interval is Interval.WEEKLY:
+            monday = session - timedelta(days=session.weekday())
+            return DateRange(monday, monday + timedelta(days=4))
+        nxt = (date(session.year + 1, 1, 1) if session.month == 12
+               else date(session.year, session.month + 1, 1))
+        return DateRange(date(session.year, session.month, 1), nxt - timedelta(days=1))
+
+
+PeriodInterval.WEEKLY = PeriodInterval(Interval.WEEKLY)
+PeriodInterval.MONTHLY = PeriodInterval(Interval.MONTHLY)
+
+
+def _at_least_one(value: object, what: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError(f"{what} {value!r} is not a whole number of at least 1")
+
+
+@dataclass(frozen=True)
+class AtrPeriod:
+    """How many candles Wilder's ATR averages over (its n)."""
+
+    value: int
+
+    def __post_init__(self) -> None:
+        _at_least_one(self.value, "ATR period")
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+@dataclass(frozen=True)
+class SessionsEachSide:
+    """How many sessions on each side of a swing low must have traded higher to confirm it."""
+
+    value: int
+
+    def __post_init__(self) -> None:
+        _at_least_one(self.value, "sessions each side")
+
+    def __str__(self) -> str:
+        return str(self.value)

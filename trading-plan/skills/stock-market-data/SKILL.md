@@ -23,12 +23,15 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data
 ```
 
 Always pass `--store` exactly as above: it points at this project's own candle store (next section).
+A value given to `--atr` or `--swings` must be a whole number of at least 1; anything else exits 2
+before anything is fetched.
 
 Input is **broker tickers** (`.PL` / `.DE` / `.US`) — the same symbols the state files use — or an
 **ISIN** (resolved via the same map; handy for index-membership callers). You never pass
 provider-specific symbols. `--interval` picks the candle: `d` daily (default), `w` weekly, `m` monthly
-— W1/MN are aggregated from the daily series (open=period start, high/low=extremes, close=period end),
-so they carry the same fields and `complete`/`last_closed` semantics as daily.
+— W1/MN are aggregated from the daily series (open=period start, high/low=extremes, close=period end,
+each over the period's trusted sessions), so they carry the same OHLCV and `complete`/`last_closed`
+semantics as daily, plus a `status` instead of a `source` (Output contract).
 
 `--cache` reuses the same market day's closed candles from a local cache instead of fetching; reach
 for it when a run re-reads closed candles, and omit it when the moment needs live data — your call
@@ -84,13 +87,37 @@ by import and asked before Yahoo, which only fills what the store lacks
 
 Self-describing JSON to stdout: a header `source` describing the chain that was asked — each
 source's description, most trusted first, joined by ` > ` — and `quotes[<key you passed>]` with
-`yahoo_symbol`, `xtb`, `resolved_by`, and either `ok:true` + `last_closed {date,c}` + `bars[]`, or
-`ok:false` + `reason` + `unavailable` + `value:"[NO DATA]"`.
+`yahoo_symbol`, `xtb`, `resolved_by`, and either `ok:true` + `last_closed {date, c, status,
+excluded_sessions}` + `bars[]`, or `ok:false` + `reason` + `unavailable` + `value:"[NO DATA]"`.
 
-Every daily bar in `bars[]` carries `source`, the name of the source that supplied it: `store` (this
-project's own candle store) or `yahoo`; weekly and monthly bars do not. `unavailable:
-[{source, reason}]` lists the sources that did not answer (`store`, `yahoo`); an `ok:true` record
-carries it only when some source did not answer.
+A daily bar in `bars[]` is `{date, o, h, l, c, v, complete, source, trusted}`, plus
+`untrusted_reason` only when `trusted` is `false`. `source` is the name of the source that supplied
+it: `store` (this project's own candle store) or `yahoo`. `trusted` says whether that source vouches
+for the session: the store always does; Yahoo marks a **placeholder** (`o == h == l == c` and volume
+0 or missing, a session it filled in rather than one that traded) `trusted:false`,
+`untrusted_reason:"placeholder"`, and a session where it sent an open, high, low or close that is
+no price (0, negative, not finite) `untrusted_reason:"unusable_price"`, with that field `null`; a
+price Yahoo did not send at all is only a `null` on a trusted bar. Other reasons may follow. An
+untrusted bar is shown as the source gave it, never repaired.
+A weekly or monthly bar is `{date, o, h, l, c, v, complete, status, excluded_sessions}`, with no
+`source`.
+
+**Derived values** — W1/MN bars, `last_closed`, `atr`, `swing_lows` — follow one rule
+([ADR 0002](https://github.com/kkasprzak/stock-investing/blob/main/docs/adr/0002-derived-values-are-computed-only-from-trusted-sessions-and-carry-a-status.md)):
+a value is computed from trusted sessions only and names the ones it had to leave out; how much
+left out is too much is the consumer's call. Each carries both keys, always:
+
+- `status`: `good` (nothing left out), `uncertain` (a real value, read without the sessions in
+  `excluded_sessions`), or `no_value` — only on a W1/MN bar whose period has no trusted session:
+  its `o/h/l/c/v` are `null` while it stays in the series with `complete` from the calendar.
+- `excluded_sessions`: ISO dates of the closed untrusted sessions left out, oldest first; `[]` when
+  `good`. On W1/MN that includes the closed untrusted sessions of the period still in progress:
+  they ended after every reading's date. A forming untrusted bar is not a closed session: it adds
+  no values to its period and is not named. A W1/MN period holding only that bar still appears, as
+  a `no_value` candle with `o/h/l/c/v` `null`, `complete:false` and `excluded_sessions:[]`.
+
+`unavailable: [{source, reason}]` lists the sources that did not answer (`store`, `yahoo`); an
+`ok:true` record carries it only when some source did not answer.
 
 `ok:false` when no source answered, and also when no bars came back while some source did not
 answer. An `ok:false` record always carries the full `unavailable` list; `reason` is Yahoo's entry
@@ -100,15 +127,26 @@ there, else the first one's. A source that answered with nothing is not a failur
 - `xtb` = the **execution-venue ticker** for this instrument, or `null` when the map has none.
   Reach for it when you keyed by ISIN and need the symbol a state file names. Never guessed: `null`
   means the broker does not list it, so confirm there rather than inferring from the GPW root.
-- `last_closed` = the most recent **completed** D1 candle — the number to reason on.
-- `atr` (only with `--atr`) = `{n, method, interval, value, bars_used, as_of, short_history}` — Wilder's
-  ATR on the requested interval, the single definition every caller shares. Computed from **complete**
-  candles over a fixed window (`5 x n + 1`), so the same instrument reads the same ATR for a 6-bar
-  morning check and a 200-bar sizing run. `short_history:true` = fewer candles than that window: the
-  value is still reported, but the recursion has not settled. Too few for `n+1` TRs → `atr: null`.
+- `last_closed` = the most recent **completed**, trusted candle of the requested interval that has a
+  close — the number to reason on. Read over the whole fetched series, not the `--bars` slice, so a
+  short slice of placeholders still finds the last real session. Its `excluded_sessions` names the
+  untrusted sessions closed after it (and, for a W1/MN candle, those left out of it); it is `null`
+  only when no such candle exists.
+- `atr` (only with `--atr`) = `{n, method, value, bars_used, as_of, short_history, interval, status,
+  excluded_sessions}` — Wilder's ATR on the requested interval, the single definition every caller
+  shares. Computed from **complete**, trusted candles (a W1/MN candle with `no_value` is skipped)
+  over a fixed window of the last `5 x n + 1` such candles, so the same instrument reads the same
+  ATR for a 6-bar morning check and a 200-bar sizing run, and an untrusted session inside the window
+  pushes it one candle further back instead of entering it. `as_of` is the last candle used.
+  `short_history:true` = fewer candles than that window: the value is still reported, but the
+  recursion has not settled. Fewer than `n+1` usable candles → `atr: null`; that covers both a short
+  history and a window where everything is untrusted, and the output does not tell them apart.
 - `swing_lows` (only with `--swings`) = `{candle_interval, sessions_each_side_with_higher_lows,
-  window_first_session, window_last_session, window_sessions, detectable_through, detected[]}` — the
-  confirmed swing lows of that window, the single definition every caller shares. A low counts when
+  window_first_session, window_last_session, window_sessions, detectable_through, detected[], status,
+  excluded_sessions}` — the
+  confirmed swing lows of that window, the single definition every caller shares. Read from
+  complete, trusted candles like ATR, but a candle needs only a low here (ATR needs high, low and
+  close): an untrusted session is neither a candidate nor a neighbour, so it never confirms a low. No usable candle at all → `swing_lows: null`. A low counts when
   the N sessions before **and** after it all traded higher, so it cannot be read until N sessions
   have closed after it: `detectable_through` is that edge, N sessions behind `window_last_session`.
   Same window as ATR (`5 x n + 1`), so a stop distance in ATR multiples and the structure it is
@@ -128,8 +166,27 @@ there, else the first one's. A source that answered with nothing is not a failur
   today's bar is `complete:false` while that exchange is trading and flips to `true` once its regular
   session ends (close time read from the exchange's own calendar, so an evening GPW/XETRA run gets
   today's D1 as a fact while a US name is still forming). Same rule for W1/MN — a week closes on
-  Friday evening. Use `last_closed`, or filter `complete:true`; never decide on a forming bar.
+  Friday evening. Use `last_closed`, or filter daily bars on `complete:true` **and**
+  `trusted:true`; never decide on a forming bar. `complete` stays honest about the calendar, so a
+  placeholder is `complete:true` and stays in `bars[]` with its made-up OHLC: `complete` alone does
+  not filter it out.
   If the provider omits the session calendar, the flag stays conservative (`false`) rather than guess.
+- **A closed W1/MN candle can have `o/h/l/c/v: null`.** That is `status:"no_value"`: none of the
+  period's sessions was trusted (a week of placeholders), and `excluded_sessions` lists them all.
+  The candle stays in the series rather than leaving a silent hole; `atr`, `swing_lows` and
+  `last_closed` skip it and name its sessions.
+- **A day without trades on an illiquid instrument looks like a placeholder** (ETFs, small caps:
+  one price all day, no volume) and is left out the same way, so ATR reads slightly higher than
+  through 0.5.0, and an instrument without a store can stay `uncertain` for good. The cure is
+  importing it into the store, whose sessions are always trusted. The same holds for Yahoo's GPW
+  history: it carries flat zero-volume bars on exchange holidays (seen 2017–2020, e.g. 2020-11-11),
+  so an MN reading whose window reaches back that far is `uncertain` and names those dates (a
+  store whose history starts later does not cover them), while
+  the value itself as a rule does not move (such a bar sits at the previous close, almost always
+  inside its month's range).
+- **A session the source does not return at all is not named.** `excluded_sessions` lists the
+  sessions a source served and did not vouch for; a session missing from the answer has no bar to
+  judge, so it shows only as a gap in the dates.
 - **An ex-date inside the ATR window inflates ATR.** Candles are unadjusted, so a dividend gap enters
   True Range as volatility that never happened. This layer has no event calendar — the caller holding
   ex-dates checks whether one falls in the last `5 x n + 1` sessions.

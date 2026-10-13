@@ -10,8 +10,9 @@ from market_data.ports import QuoteSeries, QuoteSource, QuoteSourceUnavailableEr
 class QuoteChain:
     """A QuoteSource over `sources`, most trusted first. Every source is asked for the whole period
     (the chain knows no exchange calendar, so it cannot ask for gaps). A date a higher source already
-    answered is skipped in the lower ones; within one source bars pass unchanged, two bars sharing a
-    date included. A source that raises QuoteSourceUnavailableError is recorded in `unavailable` and
+    answered is skipped in the lower ones, even when the higher source's bar is untrusted and the
+    lower one's trusted (which cannot happen while the only higher source is the store, whose bars
+    are always trusted); within one source bars pass unchanged, two bars sharing a date included. A source that raises QuoteSourceUnavailableError is recorded in `unavailable` and
     the next one is asked; only when none answered does the chain raise. Any other exception
     propagates. An empty answer is an answer."""
 
@@ -34,10 +35,10 @@ class QuoteChain:
                 continue
             answered = True
             resolved.extend(series.resolved)
-            fresh = [b for b in series.bars if b["date"] not in taken]
+            fresh = [b for b in series.bars if b.session not in taken]
             bars.extend(fresh)
-            taken.update(b["date"] for b in fresh)      # after the whole source, not per bar
+            taken.update(b.session for b in fresh)      # after the whole source, not per bar
         if not answered:
             raise QuoteSourceUnavailableError(tuple(failures), tuple(resolved))
-        bars.sort(key=lambda b: b["date"])              # stable: same-date bars keep their order
+        bars.sort(key=lambda b: b.session)              # stable: same-date bars keep their order
         return QuoteSeries(tuple(bars), tuple(resolved), tuple(failures))

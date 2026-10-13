@@ -8,7 +8,9 @@ from decimal import Decimal
 
 import support  # noqa: F401  (puts scripts/ on sys.path)
 import quotes
-from market_data.model import DailyQuote, DateRange, Instrument, Interval, Isin, Price, Volume
+from market_data.model import (AtrPeriod, DailyBar, DailyQuote, DateRange, Instrument, Interval,
+                               Isin, PeriodBar, PeriodInterval, Price, Quality, SessionsEachSide,
+                               Status, Trust, Volume)
 
 
 class TestDateRange(unittest.TestCase):
@@ -42,6 +44,52 @@ class TestInterval(unittest.TestCase):
     def test_unknown_value_is_rejected(self):
         with self.assertRaises(ValueError):
             Interval("x")
+
+
+class TestPeriodInterval(unittest.TestCase):
+    """The interval aggregate rolls daily bars up into: weekly or monthly, never daily."""
+
+    D = date.fromisoformat
+
+    def test_daily_is_not_a_period_interval(self):
+        with self.assertRaises(ValueError):
+            PeriodInterval(Interval.DAILY)
+
+    def test_holds_an_interval_not_its_string(self):
+        with self.assertRaises(ValueError):
+            PeriodInterval("w")
+
+    def test_constants(self):
+        self.assertEqual((PeriodInterval.WEEKLY.interval, PeriodInterval.MONTHLY.interval),
+                         (Interval.WEEKLY, Interval.MONTHLY))
+        self.assertEqual(PeriodInterval(Interval.WEEKLY), PeriodInterval.WEEKLY)
+
+    def test_weekly_period_is_monday_to_friday(self):
+        week = DateRange(self.D("2026-07-20"), self.D("2026-07-24"))
+        self.assertEqual(PeriodInterval.WEEKLY.period(self.D("2026-07-24")), week)
+        self.assertEqual(PeriodInterval.WEEKLY.period(self.D("2026-07-20")), week)
+
+    def test_monthly_period_and_year_boundary(self):
+        self.assertEqual(PeriodInterval.MONTHLY.period(self.D("2026-07-15")),
+                         DateRange(self.D("2026-07-01"), self.D("2026-07-31")))
+        self.assertEqual(PeriodInterval.MONTHLY.period(self.D("2026-12-31")),
+                         DateRange(self.D("2026-12-01"), self.D("2026-12-31")))
+
+
+class TestCounts(unittest.TestCase):
+    """The ATR period and the sessions each side of a swing low: whole numbers, at least 1, and two
+    types, so one cannot be passed where the other is meant."""
+
+    def test_at_least_one(self):
+        for cls in (AtrPeriod, SessionsEachSide):
+            self.assertEqual(cls(1).value, 1)
+            self.assertEqual(str(cls(14)), "14")
+            for bad in (0, -3, True, 2.0, "2", None):
+                with self.subTest(cls=cls.__name__, value=bad), self.assertRaises(ValueError):
+                    cls(bad)
+
+    def test_the_two_are_not_interchangeable(self):
+        self.assertNotEqual(AtrPeriod(2), SessionsEachSide(2))
 
 
 class TestInstrument(unittest.TestCase):
@@ -153,6 +201,94 @@ class TestDailyQuote(unittest.TestCase):
     def test_rejects_high_below_close(self):
         with self.assertRaises(ValueError):
             quote("102", "104", "98", "105")
+
+
+class TestTrust(unittest.TestCase):
+    def test_trusted_has_no_reason(self):
+        self.assertTrue(Trust.TRUSTED.trusted)
+        self.assertIsNone(Trust.TRUSTED.reason)
+
+    def test_untrusted_keeps_its_reason(self):
+        t = Trust.untrusted("placeholder")
+        self.assertFalse(t.trusted)
+        self.assertEqual(t.reason, "placeholder")
+
+    def test_untrusted_rejects_an_empty_or_blank_reason(self):
+        for reason in ("", "   ", "\n"):
+            with self.subTest(reason=reason), self.assertRaises(ValueError):
+                Trust.untrusted(reason)
+
+    def test_constructor_holds_the_same_rule(self):
+        for reason in ("", "   "):
+            with self.subTest(reason=reason), self.assertRaises(ValueError):
+                Trust(reason)
+
+
+class TestStatus(unittest.TestCase):
+    def test_values(self):
+        self.assertEqual((Status.GOOD, Status.UNCERTAIN, Status.NO_VALUE),
+                         ("good", "uncertain", "no_value"))
+
+
+D1, D2, D3 = date(2026, 10, 5), date(2026, 10, 6), date(2026, 10, 7)
+
+
+class TestQuality(unittest.TestCase):
+    def test_good_excludes_nothing(self):
+        self.assertEqual(Quality.GOOD.excluded, ())
+        self.assertIs(Quality.GOOD.status, Status.GOOD)
+
+    def test_any_excluded_session_makes_it_uncertain(self):
+        self.assertIs(Quality((D1,)).status, Status.UNCERTAIN)
+
+    def test_excluded_is_sorted_and_unique(self):
+        self.assertEqual(Quality((D3, D1, D3, D2, D1)).excluded, (D1, D2, D3))
+
+    def test_equal_whatever_order_the_dates_came_in(self):
+        self.assertEqual(Quality((D2, D1)), Quality((D1, D2, D1)))
+
+    def test_combine_is_the_union_of_excluded(self):
+        self.assertEqual(Quality.combine(Quality((D3, D1)), Quality.GOOD, Quality((D1, D2))),
+                         Quality((D1, D2, D3)))
+
+    def test_combine_of_good_is_good(self):
+        self.assertEqual(Quality.combine(Quality.GOOD, Quality.GOOD), Quality.GOOD)
+        self.assertEqual(Quality.combine(), Quality.GOOD)
+
+
+def p(text):
+    return Price.parse(text)
+
+
+class TestDailyBar(unittest.TestCase):
+    def test_builds_with_no_prices_and_no_volume(self):
+        b = DailyBar(D1, None, None, None, None, None, complete=False, source="yahoo",
+                     trust=Trust.TRUSTED)
+        self.assertEqual((b.open, b.high, b.low, b.close, b.volume), (None,) * 5)
+
+    def test_holds_no_ohlc_rules(self):
+        # what a source said, not a quote: a low above the high is still a bar
+        b = DailyBar(D1, p("100"), p("98"), p("104"), p("102"), Volume(0), complete=True,
+                     source="yahoo", trust=Trust.untrusted("placeholder"))
+        self.assertEqual((b.high, b.low), (p("98"), p("104")))
+        self.assertFalse(b.trust.trusted)
+
+
+class TestPeriodBar(unittest.TestCase):
+    def bar(self, close, quality):
+        return PeriodBar(D1, p("100"), p("104"), p("98"), close, Volume(1000), complete=True,
+                         quality=quality)
+
+    def test_good_when_close_is_there_and_nothing_excluded(self):
+        self.assertIs(self.bar(p("102"), Quality.GOOD).status, Status.GOOD)
+
+    def test_uncertain_when_close_is_there_and_sessions_were_excluded(self):
+        self.assertIs(self.bar(p("102"), Quality((D2,))).status, Status.UNCERTAIN)
+
+    def test_no_value_without_a_close(self):
+        for quality in (Quality.GOOD, Quality((D2,))):
+            with self.subTest(quality=quality):
+                self.assertIs(self.bar(None, quality).status, Status.NO_VALUE)
 
 
 if __name__ == "__main__":

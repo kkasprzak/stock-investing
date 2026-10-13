@@ -15,6 +15,12 @@ Semantics every adapter keeps:
   port. Any other exception is a bug, not an answer: it is not caught and ends the run.
 - `now` (epoch) is injected: the adapter decides each bar's `complete` flag in the market's own
   time zone. It stays a float because session_end/stamp_complete compute on epochs.
+- Bars are DailyBar. Each carries `source` (the adapter's name) and `trust`, set by the adapter
+  that served it: whether a session can be relied on is that source's knowledge, so nothing
+  downstream decides it. An adapter does not guess a price for a session it cannot vouch for and
+  does not drop a session it reported values for: it serves it marked untrusted, with the reason.
+  A row in which the vendor gave no value at all is no answer about that session, and an adapter
+  may leave it out.
 
 Deliberately plain: an adapter's `name` is a str (an enum of known sources would break open-closed)
 and so is a failure's `reason` (http_<code> is open-ended).
@@ -25,7 +31,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
-from market_data.model import DateRange, Instrument
+from market_data.model import DailyBar, DateRange, Instrument
 
 
 class ResolvedBy(str, Enum):
@@ -52,7 +58,7 @@ class SourceFailure:
 
 @dataclass(frozen=True)
 class QuoteSeries:
-    bars: tuple[dict, ...]      # daily bars, newest last; each carries "source": <adapter name>
+    bars: tuple[DailyBar, ...]  # newest last
     resolved: tuple[Resolution, ...]
     unavailable: tuple[SourceFailure, ...] = ()   # filled only by the composite
 
