@@ -1,11 +1,14 @@
 """market_data.model — the value objects every source and the CLI share."""
 from __future__ import annotations
 
+import json
 import unittest
 from datetime import date
+from decimal import Decimal
 
 import support  # noqa: F401  (puts scripts/ on sys.path)
-from market_data.model import DateRange, Instrument, Interval
+import quotes
+from market_data.model import DailyQuote, DateRange, Instrument, Interval, Isin, Price, Volume
 
 
 class TestDateRange(unittest.TestCase):
@@ -47,6 +50,109 @@ class TestInstrument(unittest.TestCase):
         self.assertEqual(i.key, "ZZZ.PL")
         self.assertIsNone(i.isin)
         self.assertEqual(dict(i.symbols), {})
+
+
+class TestIsin(unittest.TestCase):
+    def test_accepts_every_isin_in_the_symbol_map(self):
+        with open(quotes.SYMBOLS) as f:
+            keys = list(json.load(f)["instruments"])
+        self.assertEqual(len(keys), 144)
+        for key in keys:
+            with self.subTest(key=key):
+                self.assertEqual(str(Isin.parse(key)), key)
+
+    def test_rejects_a_wrong_check_digit(self):
+        with self.assertRaises(ValueError):
+            Isin.parse("PLPEKAO00017")          # PLPEKAO00016 is Pekao
+
+    def test_rejects_lower_case(self):
+        with self.assertRaises(ValueError):
+            Isin.parse("plpkn0000018")
+
+    def test_rejects_a_wrong_length(self):
+        for text in ("PLPKN000018", "PLPKN00000018", ""):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                Isin.parse(text)
+
+    def test_rejects_a_path(self):
+        with self.assertRaises(ValueError):
+            Isin.parse("../x")
+
+    def test_rejects_a_trailing_newline(self):
+        with self.assertRaises(ValueError):
+            Isin.parse("PLPKN0000018\n")
+
+    def test_constructor_holds_the_same_rule(self):
+        with self.assertRaises(ValueError):
+            Isin("PL0000000000")
+
+
+class TestPrice(unittest.TestCase):
+    def test_keeps_the_text_it_was_parsed_from(self):
+        self.assertEqual(str(Price.parse("133.50")), "133.50")
+        self.assertEqual(str(Price.parse("19")), "19")
+
+    def test_equality_is_by_value(self):
+        self.assertEqual(Price.parse("133.5"), Price.parse("133.50"))
+
+    def test_value_is_a_decimal(self):
+        self.assertEqual(Price.parse("0.1235").value, Decimal("0.1235"))
+
+    def test_rejects(self):
+        for text in ("0", "0.00", "-1", "inf", "nan", "1e2", " 1.5", "1.5 ", "", "1.", ".5", "1,5",
+                     "1.5\n"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                Price.parse(text)
+
+    def test_constructor_holds_the_same_rule(self):
+        for value in (Decimal("0"), Decimal("-1"), Decimal("Infinity"), Decimal("NaN")):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                Price(value)
+
+
+class TestVolume(unittest.TestCase):
+    def test_parses_a_whole_number(self):
+        self.assertEqual(Volume.parse("566443").value, 566443)
+        self.assertEqual(str(Volume.parse("0")), "0")
+
+    def test_rejects(self):
+        for text in ("560358.27", "-1", "", " 1", "1e3", "1\n"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                Volume.parse(text)
+
+    def test_constructor_holds_the_same_rule(self):
+        with self.assertRaises(ValueError):
+            Volume(-1)
+
+
+def quote(o, h, l, c):  # noqa: E741
+    return DailyQuote(date(2026, 10, 9), Price.parse(o), Price.parse(h), Price.parse(l),
+                      Price.parse(c), Volume.parse("1000"))
+
+
+class TestDailyQuote(unittest.TestCase):
+    def test_accepts_a_flat_session(self):
+        q = quote("100", "100", "100", "100")
+        self.assertEqual((q.open, q.close), (Price.parse("100"), Price.parse("100")))
+
+    def test_accepts_a_regular_session(self):
+        quote("100", "104", "98", "102")
+
+    def test_rejects_low_above_open(self):
+        with self.assertRaises(ValueError):
+            quote("100", "104", "101", "102")
+
+    def test_rejects_low_above_close(self):
+        with self.assertRaises(ValueError):
+            quote("102", "104", "101", "100")
+
+    def test_rejects_high_below_open(self):
+        with self.assertRaises(ValueError):
+            quote("105", "104", "98", "102")
+
+    def test_rejects_high_below_close(self):
+        with self.assertRaises(ValueError):
+            quote("102", "104", "98", "105")
 
 
 if __name__ == "__main__":

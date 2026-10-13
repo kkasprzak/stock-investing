@@ -29,8 +29,12 @@ from market_data.model import DateRange, Instrument
 
 
 class ResolvedBy(str, Enum):
+    """How an adapter found the instrument's symbol. Grows with the adapter that resolves another
+    way."""
+
     SYMBOLS_JSON = "symbols.json"
     SUFFIX_GUESS = "suffix_guess"
+    ISIN = "isin"               # the ISIN itself is the key (the own store: <ISIN>.csv)
 
 
 @dataclass(frozen=True)
@@ -70,5 +74,6 @@ class QuoteSourceUnavailableError(QuoteSourceError):
 
 class QuoteSource(Protocol):
     name: str
+    description: str            # the text for the output header's `source`
 
     def daily(self, instrument: Instrument, period: DateRange, *, now: float) -> QuoteSeries: ...

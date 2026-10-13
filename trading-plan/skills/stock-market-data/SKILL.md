@@ -8,19 +8,21 @@ user-invocable: false
 
 The market-data-acquisition layer: fresh **delayed** D1 OHLC for named instruments. Reach for this
 whenever a flow needs recent prices/candles for specific tickers. It returns facts (self-describing
-JSON) — the caller judges. Backend is a market-data provider (currently Yahoo); callers depend on the
-output contract, not the provider.
+JSON) — the caller judges. Backend is a chain of market-data sources asked in trust order; callers
+depend on the output contract, not on which source answered.
 
 ## Run
 
 ```
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL ALE.PL PKO.PL ETFBM40TR.PL   # broker tickers, daily
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --interval w                 # weekly (W1); m = monthly
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --bars 10                    # more history per symbol
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --cache                      # reuse today's closed candles (skip the fetch)
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --atr                        # + Wilder ATR(14) on that interval (--atr 20 to override)
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py PKN.PL --swings                     # + confirmed swing lows (2 sessions each side; --swings 3 to override)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL ALE.PL PKO.PL ETFBM40TR.PL   # broker tickers, daily
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --interval w                 # weekly (W1); m = monthly
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --bars 10                    # more history per symbol
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --cache                      # reuse today's closed candles (skip the fetch)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --atr                        # + Wilder ATR(14) on that interval (--atr 20 to override)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --swings                     # + confirmed swing lows (2 sessions each side; --swings 3 to override)
 ```
+
+Always pass `--store` exactly as above: it points at this project's own candle store (next section).
 
 Input is **broker tickers** (`.PL` / `.DE` / `.US`) — the same symbols the state files use — or an
 **ISIN** (resolved via the same map; handy for index-membership callers). You never pass
@@ -35,15 +37,65 @@ was written in: **crossing that venue's close invalidates it**, so a series cach
 never served afterwards as the day's closed candle. Within an open session a cached forming bar can
 still be stale by construction — that bar is `complete:false`, so never decide on it.
 
+## Own candle store (required per project)
+
+The store is this project's own record of closed daily candles, one CSV file per ISIN, filled only
+by import and asked before Yahoo, which only fills what the store lacks
+([ADR 0000](https://github.com/kkasprzak/stock-investing/blob/main/docs/adr/0000-own-candle-store-is-the-most-trusted-source-of-market-data.md),
+[ADR 0001](https://github.com/kkasprzak/stock-investing/blob/main/docs/adr/0001-candle-store-is-one-csv-file-per-isin-versioned-in-the-consumers-repository.md)).
+
+- **Every project that uses this skill has its own store**, under `data/market-data/` in that
+  project's repository. There is no global store. The `Run` lines point at it.
+- `unavailable: [{source: "store", reason: "no_store"}]` on every record means this project has no
+  store yet: do the first import (below). Until then the bars come from Yahoo alone. `quotes.py`
+  exiting 2 with "parent directory ... does not exist" means `--store` did not point into the
+  project (an empty `${CLAUDE_PROJECT_DIR}` gives `/data/market-data`): fix the path, do not import.
+- **Feeding it** — one export per instrument, keyed the same way as `quotes.py`:
+
+  ```
+  python3 ${CLAUDE_SKILL_DIR}/scripts/import_quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data stooq <export.csv> --for PEO.PL
+  ```
+
+  The export is Stooq's **daily** history with "pomijaj splity + dywidendy" (skip splits and
+  dividends). Stooq's daily export lists closed sessions only: a day that has not closed is not in
+  it, so every row is a complete candle and a row dated today is today's closed session, imported.
+  History from 2022 is enough. The export's prices and volume carry noise of about
+  1e-5 of each value, which the importer takes off; a value further off rejects the whole file
+  (Stooq's history before ~2022 has more noise: export a shorter range). A row dated after today
+  rejects the whole file.
+- The importer prints a JSON report: `{isin, key, file, added, unchanged, changed, changed_dates[],
+  imported: {first, last}}`. `changed` > 0 means sessions already in the store now
+  read differently: check `changed_dates` and the `git diff` before keeping them. When `added` and
+  `changed` are both 0 the importer writes nothing, so importing the same export again leaves the
+  file as it was; the `--store` directory itself appears only with the first write, and only under
+  a parent that already exists. Exit 1: the
+  export was rejected (`line N: why` on stderr), is missing, or the store file is unreadable or
+  malformed, or the store cannot be written (`--store` is a file, no write permission); the store
+  file was not touched. Exit 2: bad arguments (including a missing `--store`, one still holding a
+  literal `${`, or one whose parent directory does not exist), or a ticker with no ISIN in the map;
+  nothing is created.
+- **Committing the store is the user's step**; the importer never runs git. The project's
+  `.gitattributes` should carry `data/market-data/*.csv text eol=lf`.
+- Consequences: with a store, a Yahoo outage still gives `ok:true` on the store's bars, and the
+  outage shows in `unavailable`. Yahoo is split-adjusted and the "skip splits" export is not, so a
+  split after the last import breaks continuity between store and Yahoo bars until the next import.
+
 ## Output contract
 
-Self-describing JSON to stdout: `quotes[<key you passed>]` with `yahoo_symbol`, `xtb`,
-`resolved_by`, and either `ok:true` + `last_closed {date,c}` + `bars[]`, or `ok:false` + `reason` +
-`value:"[NO DATA]"`.
+Self-describing JSON to stdout: a header `source` describing the chain that was asked — each
+source's description, most trusted first, joined by ` > ` — and `quotes[<key you passed>]` with
+`yahoo_symbol`, `xtb`, `resolved_by`, and either `ok:true` + `last_closed {date,c}` + `bars[]`, or
+`ok:false` + `reason` + `unavailable` + `value:"[NO DATA]"`.
 
-Every daily bar in `bars[]` carries `source`, the name of the source that supplied it (today always
-`yahoo`); weekly and monthly bars do not. An `ok:true` record gains `unavailable: [{source, reason}]`
-only when some of the sources did not answer — with a single source it never appears.
+Every daily bar in `bars[]` carries `source`, the name of the source that supplied it: `store` (this
+project's own candle store) or `yahoo`; weekly and monthly bars do not. `unavailable:
+[{source, reason}]` lists the sources that did not answer (`store`, `yahoo`); an `ok:true` record
+carries it only when some source did not answer.
+
+`ok:false` when no source answered, and also when no bars came back while some source did not
+answer. An `ok:false` record always carries the full `unavailable` list; `reason` is Yahoo's entry
+there, else the first one's. A source that answered with nothing is not a failure: no bars and no
+`unavailable` stays `ok:true`.
 
 - `xtb` = the **execution-venue ticker** for this instrument, or `null` when the map has none.
   Reach for it when you keyed by ISIN and need the symbol a state file names. Never guessed: `null`
@@ -66,7 +118,8 @@ only when some of the sources did not answer — with a single source it never a
   retest is not one, and `higher_than_previous_row_low` is `null` on the first row (no predecessor),
   never `false`. **Every** confirmed low is reported, lower ones included — which one a stop may
   anchor to is the caller's rule, not this layer's. No pivot in the window → `detected: []`.
-- Data is **delayed (~15 min)** — recent, not real-time.
+- Bars with `source: "yahoo"` are **delayed (~15 min)** — recent, not real-time. Bars with
+  `source: "store"` are closed sessions as of the last import.
 - A price it can't read is `[NO DATA]`, never inferred. One bad ticker never fails the others.
 
 ## Gotchas

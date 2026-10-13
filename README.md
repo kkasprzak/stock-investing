@@ -22,7 +22,7 @@ fourth remembers what you held:
 
 | skill | what it does |
 |---|---|
-| `stock-market-data` | Fetches delayed daily / weekly / monthly OHLC candles and Wilder ATR for named tickers (GPW / XETRA / US), resolved through a shared ISIN-keyed symbol map. The single place ATR is computed, so two callers never disagree on the same number. |
+| `stock-market-data` | Fetches delayed daily / weekly / monthly OHLC candles and Wilder ATR for named tickers (GPW / XETRA / US), resolved through a shared ISIN-keyed symbol map. Asks your project's own candle store first (one CSV per ISIN under `data/market-data/`, filled only by importing Stooq exports with `import_quotes.py`), and Yahoo only for the sessions the store lacks. The single place ATR is computed, so two callers never disagree on the same number. |
 | `instrument-analysis` | A purely technical read of one instrument from a candle snapshot: trend, momentum, key levels, condition, invalidation, an implied stop, and a 0-10 setup score. Emits a strict ten-line contract with closed vocabularies, so an orchestrator can parse it. |
 | `instrument-research` | Web-sourced company facts, one facet at a time: `events` (earnings, ex-dividend, buybacks, overhang, contested control), `fundamentals`, or `news`. Every date and number carries its source, or is marked `[UNVERIFIED]` — never inferred. A buyback's status names the company report it rests on, and is `[UNVERIFIED]` when a later event is known only from a search summary. |
 | `position-journal` | An append-only log of positions opened and closed, and three folds over it: what you hold, every episode of one name, and how many shares you held on a given date. A state file forgets a position the moment you delete its row — this is what answers *have we owned this before, and when did we leave it*. |
@@ -62,7 +62,9 @@ RUN_LIVE_SMOKE=1 python3 -m unittest discover -s trading-plan/skills/stock-marke
 ```
 
 The offline suites run in well under a second — `stock-market-data` against frozen fixtures,
-`position-journal` against none at all, since it has no network and no clock. The live smoke test
+`position-journal` against none at all, since it has no network and no clock. The
+`stock-market-data` suite covers the importer too: real Stooq exports parsed and pinned, and
+`import_quotes.py` run end to end on a temporary store. The live smoke test
 hits the data provider and is opt-in.
 
 ## Disclaimer

@@ -1,4 +1,5 @@
-"""Shared test support for stock-market-data: frozen clock, fixture loaders, tolerances.
+"""Shared test support for stock-market-data: frozen clock, fixture loaders, tolerances, a fake
+QuoteSource.
 
 Importing this module puts ../scripts on sys.path, so test files can `import quotes` and
 `import market_data...` after `import support`. Named support, not fixtures: fixtures/ is the
@@ -43,6 +44,24 @@ DIVIDEND_WEEKS = {
 def load_yahoo(ticker):
     with open(os.path.join(FX, f"yahoo_{ticker}.json")) as f:
         return json.load(f)
+
+
+class FakeSource:
+    """A QuoteSource giving every instrument the same answer, or raising `error`."""
+
+    name = "fake"
+    description = "fake quotes"
+
+    def __init__(self, series=None, error=None):
+        self._series = series
+        self._error = error
+        self.asked = []                     # (instrument key, period)
+
+    def daily(self, instrument, period, *, now):
+        self.asked.append((instrument.key, period))
+        if self._error is not None:
+            raise self._error
+        return self._series
 
 
 def pipeline(ticker, interval):

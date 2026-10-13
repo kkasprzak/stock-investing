@@ -19,6 +19,7 @@ class QuoteChain:
 
     def __init__(self, sources: Sequence[QuoteSource]) -> None:
         self._sources = tuple(sources)
+        self.description = " > ".join(s.description for s in self._sources)   # trust order
 
     def daily(self, instrument: Instrument, period: DateRange, *, now: float) -> QuoteSeries:
         bars, resolved, failures = [], [], []

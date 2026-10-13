@@ -15,14 +15,16 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from support import FROZEN_TODAY, FROZEN_NOW, load_yahoo
+from support import FX, FROZEN_TODAY, FROZEN_NOW, FakeSource, load_yahoo
 import quotes
-from market_data.adapters import yahoo
-from market_data.model import DateRange, Instrument
+from market_data.adapters.store import StoreQuotes
+from market_data.model import DateRange, Instrument, Isin
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
+from market_data.quote_chain import QuoteChain
 
 PKN = Instrument(key="PKN.PL", isin=None, symbols={"yahoo": "PKN.WA"})
+PKN_ISIN = Instrument(key="PKN.PL", isin=Isin.parse("PLPKN0000018"), symbols={"yahoo": "PKN.WA"})
 PERIOD = DateRange(date.fromisoformat(FROZEN_TODAY) - timedelta(days=300),
                    date.fromisoformat(FROZEN_TODAY))
 
@@ -57,6 +59,19 @@ class TestBuildSource(unittest.TestCase):
         self.assertEqual(os.listdir(self.tmp), ["PKN.WA.json"])
         self.assertEqual(len(self.calls), 1)
 
+    def test_with_a_store_the_store_is_asked_before_yahoo(self):
+        """Order shows in behaviour: on a date both have, the store's bar is the one that comes."""
+        store_dir = self.tmp / "store"
+        store_dir.mkdir()
+        (store_dir / "PLPKN0000018.csv").write_text(
+            "date,open,high,low,close,volume,source\n2026-07-24,1,1,1,1,7,stooq\n")
+        source = quotes.build_source(False, store_dir=store_dir, cache_dir=self.tmp / "cache",
+                                     fetch=self.fetch, sleep=lambda s: None)
+        bars = source.daily(PKN_ISIN, PERIOD, now=FROZEN_NOW).bars
+        self.assertEqual([(b["date"], b["c"], b["source"]) for b in bars[-2:]],
+                         [(bars[-2]["date"], bars[-2]["c"], "yahoo"), ("2026-07-24", 1.0, "store")])
+        self.assertEqual(len(self.calls), 1)
+
 
 def bar(day, close, source="yahoo"):
     return {"date": day, "o": close, "h": close, "l": close, "c": close, "v": 1, "complete": True,
@@ -65,30 +80,13 @@ def bar(day, close, source="yahoo"):
 
 BARS = tuple(bar(f"2026-07-{d:02d}", float(d)) for d in (20, 21, 22, 23, 24))
 YAHOO_PKN = Resolution("yahoo", "PKN.WA", ResolvedBy.SYMBOLS_JSON)
-STORE_PKN = Resolution("store", "PKN", ResolvedBy.SYMBOLS_JSON)
+STORE_PKN = Resolution("store", "PLPKN0000018", ResolvedBy.ISIN)
 
 
-class FakeSource:
-    """A QuoteSource giving every instrument the same answer, or raising `error`."""
-
-    name = "fake"
-
-    def __init__(self, series=None, error=None):
-        self._series = series
-        self._error = error
-        self.asked = []                     # (instrument key, period)
-
-    def daily(self, instrument, period, *, now):
-        self.asked.append((instrument.key, period))
-        if self._error is not None:
-            raise self._error
-        return self._series
-
-
-def run(argv, source):
+def run(argv, source=None, **seams):
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        quotes.main(argv, source=source)
+        quotes.main(argv, source=source, **seams)
     return json.loads(out.getvalue())
 
 
@@ -96,7 +94,7 @@ class TestMain(unittest.TestCase):
     def test_answered_record(self):
         src = FakeSource(QuoteSeries(BARS, (STORE_PKN, YAHOO_PKN)))
         doc = run(["PKN.PL", "--bars", "3"], src)
-        self.assertEqual(doc["source"], yahoo.DESCRIPTION)
+        self.assertEqual(doc["source"], src.description)      # the header describes the source asked
         self.assertEqual(doc["interval"], "daily")
         rec = doc["quotes"]["PKN.PL"]
         self.assertEqual((rec["yahoo_symbol"], rec["xtb"], rec["resolved_by"], rec["ok"]),
@@ -104,27 +102,84 @@ class TestMain(unittest.TestCase):
         self.assertEqual(rec["bars"], [dict(b) for b in BARS[-3:]])
         self.assertNotIn("unavailable", rec)                # empty -> absent, as today
 
+    def test_with_a_store_the_header_names_it_before_yahoo(self):
+        store_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, store_dir, True)
+
+        def build(cache, *, store_dir=None):
+            return quotes.build_source(cache, store_dir=store_dir,
+                                       fetch=lambda sym, rng: (load_yahoo("PKN"), None),
+                                       sleep=lambda s: None)
+
+        doc = run(["--store", str(store_dir), "PKN.PL"], build=build)
+        self.assertEqual(doc["source"], "own candle store (one CSV per ISIN) > "
+                                        "Yahoo Finance v8 chart (~15 min delayed)")
+
     def test_answered_record_lists_sources_that_did_not_answer(self):
         failures = (SourceFailure("store", "timeout"),)
         rec = run(["PKN.PL"], FakeSource(QuoteSeries(BARS, (YAHOO_PKN,), failures)))["quotes"]["PKN.PL"]
         self.assertEqual(rec["unavailable"], [{"source": "store", "reason": "timeout"}])
 
-    def test_unanswered_record_carries_yahoos_raw_reason(self):
+    def test_unanswered_record_carries_yahoos_raw_reason_and_every_failure(self):
         err = QuoteSourceUnavailableError(
             (SourceFailure("store", "timeout"), SourceFailure("yahoo", "not_found")),
             (STORE_PKN, Resolution("yahoo", "XXXX.WA", ResolvedBy.SUFFIX_GUESS)))
         doc = run(["XXXX.PL"], FakeSource(error=err))
         self.assertEqual(doc["quotes"]["XXXX.PL"],
                          {"yahoo_symbol": "XXXX.WA", "xtb": None, "resolved_by": "suffix_guess",
-                          "ok": False, "reason": "not_found", "value": "[NO DATA]"})
+                          "ok": False, "reason": "not_found", "value": "[NO DATA]",
+                          "unavailable": [{"source": "store", "reason": "timeout"},
+                                          {"source": "yahoo", "reason": "not_found"}]})
 
-    def test_no_yahoo_entry_gives_none_fields_instead_of_crashing(self):
+    def test_no_yahoo_entry_gives_none_fields_and_the_first_failures_reason(self):
         ok = run(["PKN.PL"], FakeSource(QuoteSeries(BARS, (STORE_PKN,))))["quotes"]["PKN.PL"]
         self.assertEqual((ok["yahoo_symbol"], ok["resolved_by"], ok["ok"]), (None, None, True))
-        err = QuoteSourceUnavailableError((SourceFailure("store", "timeout"),), (STORE_PKN,))
+        err = QuoteSourceUnavailableError((SourceFailure("store", "timeout"),
+                                           SourceFailure("broker", "http_503")), (STORE_PKN,))
         bad = run(["PKN.PL"], FakeSource(error=err))["quotes"]["PKN.PL"]
         self.assertEqual((bad["yahoo_symbol"], bad["resolved_by"], bad["reason"], bad["ok"]),
-                         (None, None, None, False))
+                         (None, None, "timeout", False))
+
+    def test_no_bars_while_a_source_did_not_answer_is_no_data(self):
+        """The store answered with nothing, Yahoo did not answer: the same ok:false record as
+        when nothing answered, not an ok:true with an empty bars list."""
+        store_empty = FakeSource(QuoteSeries((), (STORE_PKN,)))
+        yahoo_down = FakeSource(error=QuoteSourceUnavailableError(
+            (SourceFailure("yahoo", "http_503"),), (YAHOO_PKN,)))
+        rec = run(["PKN.PL"], QuoteChain([store_empty, yahoo_down]))["quotes"]["PKN.PL"]
+        self.assertEqual(rec, {"yahoo_symbol": "PKN.WA", "xtb": "PKN.PL",
+                               "resolved_by": "symbols.json", "ok": False, "reason": "http_503",
+                               "value": "[NO DATA]",
+                               "unavailable": [{"source": "yahoo", "reason": "http_503"}]})
+
+    def test_chain_where_nothing_answered_lists_both_failures(self):
+        store_down = FakeSource(error=QuoteSourceUnavailableError(
+            (SourceFailure("store", "no_store"),)))
+        yahoo_down = FakeSource(error=QuoteSourceUnavailableError(
+            (SourceFailure("yahoo", "rate_limited"),), (YAHOO_PKN,)))
+        rec = run(["PKN.PL"], QuoteChain([store_down, yahoo_down]))["quotes"]["PKN.PL"]
+        self.assertEqual((rec["ok"], rec["reason"], rec["unavailable"]),
+                         (False, "rate_limited", [{"source": "store", "reason": "no_store"},
+                                                  {"source": "yahoo", "reason": "rate_limited"}]))
+
+    def test_project_without_a_store_still_gets_yahoos_bars_and_is_told_so(self):
+        missing = Path(tempfile.mkdtemp()) / "missing"
+        self.addCleanup(shutil.rmtree, missing.parent, True)
+        yahoo_ok = FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
+        rec = run(["PKN.PL"], QuoteChain([StoreQuotes(missing), yahoo_ok]))["quotes"]["PKN.PL"]
+        self.assertEqual((rec["ok"], rec["bars"][-1], rec["unavailable"]),
+                         (True, BARS[-1], [{"source": "store", "reason": "no_store"}]))
+
+    def test_no_bars_from_a_source_that_answered_stays_ok(self):
+        """Yahoo alone answering with nothing is an answer: ok:true, as before the store."""
+        rec = run(["PKN.PL"], FakeSource(QuoteSeries((), (YAHOO_PKN,))))["quotes"]["PKN.PL"]
+        self.assertEqual((rec["ok"], rec["bars"]), (True, []))
+        self.assertNotIn("unavailable", rec)
+
+    def test_today_seam_ends_the_period(self):
+        src = FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
+        run(["PKN.PL"], src, today=date(2026, 7, 25))
+        self.assertEqual(src.asked[0][1].end, date(2026, 7, 25))
 
     def test_every_ticker_is_asked_for_one_period_ending_today(self):
         src = FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
@@ -154,6 +209,76 @@ class TestMain(unittest.TestCase):
     def test_negative_bars_do_not_crash(self):
         rec = run(["PKN.PL", "--bars", "-5"], FakeSource(QuoteSeries(BARS, (YAHOO_PKN,))))
         self.assertTrue(rec["quotes"]["PKN.PL"]["ok"])
+
+
+class TestOutputPinnedAt040(unittest.TestCase):
+    """Without a store the consumer reads what plugin 0.4.0 printed: header and records byte for byte.
+    fixtures/cli_0_4_0_PKN.json is the 0.4.0 output (commit 2589785) for these arguments, fed by the
+    same Yahoo fixture, minus 'generated' (the wall clock)."""
+
+    ARGV = ["PKN.PL", "--atr", "--swings"]
+
+    def test_header_and_records_match_0_4_0(self):
+        source = quotes.build_source(False, fetch=lambda sym, rng: (load_yahoo("PKN"), None),
+                                     sleep=lambda s: None)
+        doc = run(self.ARGV, source)
+        del doc["generated"]
+        with open(os.path.join(FX, "cli_0_4_0_PKN.json"), encoding="utf-8") as f:
+            pinned = f.read()
+        self.assertEqual(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", pinned)
+
+
+class TestFlagsReachTheCompositionRoot(unittest.TestCase):
+    """main() hands --cache and --store to build (the build_source seam) and nothing else does."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.built = []                     # (cache, store_dir) per build call
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def build(self, cache, *, store_dir=None):
+        self.built.append((cache, store_dir))
+        return FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
+
+    def test_store_dir_reaches_build(self):
+        run(["--store", str(self.tmp), "PKN.PL"], build=self.build)
+        self.assertEqual(self.built, [(False, self.tmp)])
+
+    def test_cache_flag_reaches_build(self):
+        run(["--cache", "PKN.PL"], build=self.build)
+        self.assertEqual(self.built, [(True, None)])
+
+    def test_unsubstituted_variable_in_store_is_rejected_before_anything_runs(self):
+        """A skill whose ${CLAUDE_PROJECT_DIR} was not expanded must not read as 'no store'."""
+        literal = self.tmp / "${CLAUDE_PROJECT_DIR}" / "data" / "market-data"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as exit_:
+            run(["--store", str(literal), "PKN.PL"], build=self.build)
+        self.assertEqual(exit_.exception.code, 2)
+        self.assertEqual(self.built, [])
+        self.assertIn("${", err.getvalue())
+        self.assertIn("not substituted", err.getvalue())
+        self.assertEqual(os.listdir(self.tmp), [])
+
+    def test_store_whose_parent_is_missing_is_rejected_before_anything_runs(self):
+        """An empty ${CLAUDE_PROJECT_DIR} expands to '', so --store reads /data/market-data: its
+        parent is missing, and that must not read as 'no store'."""
+        store = self.tmp / "data" / "market-data"            # tmp/data does not exist
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as exit_:
+            run(["--store", str(store), "PKN.PL"], build=self.build)
+        self.assertEqual(exit_.exception.code, 2)
+        self.assertEqual(self.built, [])
+        self.assertIn(f"parent directory '{self.tmp / 'data'}' does not exist", err.getvalue())
+        self.assertIn("was ${CLAUDE_PROJECT_DIR} substituted?", err.getvalue())
+        self.assertEqual(os.listdir(self.tmp), [])
+
+    def test_missing_store_under_an_existing_parent_still_reaches_build(self):
+        """The store directory itself missing is a project without a store yet, not a bad path."""
+        run(["--store", str(self.tmp / "market-data"), "PKN.PL"], build=self.build)
+        self.assertEqual(self.built, [(False, self.tmp / "market-data")])
 
 
 if __name__ == "__main__":
