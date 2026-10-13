@@ -86,11 +86,17 @@ def _ohlcv(b):
             "v": None if b.volume is None else b.volume.value, "complete": b.complete}
 
 
+def _quality(status, quality):
+    """A derived value's status and the sessions it left out, always both (an empty list when good)."""
+    return {"status": status.value, "excluded_sessions": [d.isoformat() for d in quality.excluded]}
+
+
 def to_json(obj):
     """The output contract's shape of a bar or a reading: keys and their order as consumers read
     them, prices as floats, dates as ISO text. A daily bar says whether its source vouches for it,
-    and why not only when it does not. Quality is not printed yet. Anything else raises TypeError,
-    as json.dump's `default` must."""
+    and why not only when it does not. A derived value (a W1/MN bar, last_closed, atr, swing_lows)
+    says its status and the sessions it left out (ADR 0002). Anything else raises TypeError, as
+    json.dump's `default` must."""
     if isinstance(obj, DailyBar):
         rec = {"date": obj.session.isoformat(), **_ohlcv(obj), "source": obj.source,
                "trusted": obj.trust.trusted}
@@ -98,15 +104,17 @@ def to_json(obj):
             rec["untrusted_reason"] = obj.trust.reason
         return rec
     if isinstance(obj, PeriodBar):                  # rolled up from several sources: none named
-        return {"date": obj.period_start.isoformat(), **_ohlcv(obj)}
+        return {"date": obj.period_start.isoformat(), **_ohlcv(obj),
+                **_quality(obj.status, obj.quality)}
     if isinstance(obj, LastClosed):
-        return {"date": obj.session.isoformat(), "c": obj.close}
+        return {"date": obj.session.isoformat(), "c": obj.close,
+                **_quality(obj.quality.status, obj.quality)}
     if isinstance(obj, AtrReading):
         rec = {"n": obj.n, "method": obj.method, "value": obj.value, "bars_used": obj.bars_used,
                "as_of": obj.as_of.isoformat(), "short_history": obj.short_history}
         if obj.interval:
             rec["interval"] = obj.interval
-        return rec
+        return {**rec, **_quality(obj.quality.status, obj.quality)}
     if isinstance(obj, SwingLow):
         return {"date": obj.session.isoformat(), "low_price": obj.low_price,
                 "higher_than_previous_row_low": obj.higher_than_previous_row_low,
@@ -120,7 +128,8 @@ def to_json(obj):
                "window_last_session": obj.window_last_session.isoformat(),
                "window_sessions": obj.window_sessions,
                "detectable_through": through.isoformat() if through else None,
-               "detected": [to_json(r) for r in obj.detected]}
+               "detected": [to_json(r) for r in obj.detected],
+               **_quality(obj.quality.status, obj.quality)}
         return {"candle_interval": obj.interval, **rec} if obj.interval else rec
     raise TypeError(f"{type(obj).__name__} is not part of the output contract")
 
@@ -230,7 +239,10 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
                      "decisions. Today's bar flips to complete:true once that venue's regular session "
                      "has closed, so an evening run reads today's candle as a fact. W1/MN are "
                      "aggregated from daily. A daily bar with trusted:false is one its source does "
-                     "not vouch for (untrusted_reason says why); it is shown, not repaired.",
+                     "not vouch for (untrusted_reason says why); it is shown, not repaired. W1/MN "
+                     "bars, last_closed, atr and swing_lows are read from trusted sessions only: "
+                     "status good, uncertain (excluded_sessions names what was left out) or "
+                     "no_value.",
         "quotes": quotes,
     }
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2, default=to_json)

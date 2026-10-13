@@ -16,7 +16,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from support import (FX, FROZEN_TODAY, FROZEN_NOW, FakeSource, daily_bar, flat_bar, load_yahoo,
-                     price)
+                     price, warsaw)
 import quotes
 from market_data.adapters.store import StoreQuotes
 from market_data.indicators import AtrReading, LastClosed, SwingLow, SwingLows
@@ -254,19 +254,37 @@ class TestToJson(unittest.TestCase):
         """Output contract (SKILL.md): daily bars name their source, W1/MN bars do not."""
         b = PeriodBar(date(2026, 7, 20), price(10), price(13), price(8.5), price(9.5), Volume(600),
                       True, Quality.GOOD)
-        self.assertEqual(list(quotes.to_json(b)), ["date", "o", "h", "l", "c", "v", "complete"])
+        self.assertEqual(list(quotes.to_json(b)), ["date", "o", "h", "l", "c", "v", "complete",
+                                                   "status", "excluded_sessions"])
         self.assertEqual(self.dumped(b), {"date": "2026-07-20", "o": 10.0, "h": 13.0, "l": 8.5,
-                                          "c": 9.5, "v": 600, "complete": True})
+                                          "c": 9.5, "v": 600, "complete": True, "status": "good",
+                                          "excluded_sessions": []})
+
+    def test_a_period_with_no_trusted_session_has_no_value_and_names_its_sessions(self):
+        left_out = Quality((date(2026, 10, 9), date(2026, 10, 5), date(2026, 10, 7)))
+        b = PeriodBar(date(2026, 10, 5), None, None, None, None, None, True, left_out)
+        self.assertEqual(self.dumped(b), {"date": "2026-10-05", "o": None, "h": None, "l": None,
+                                          "c": None, "v": None, "complete": True,
+                                          "status": "no_value",
+                                          "excluded_sessions": ["2026-10-05", "2026-10-07",
+                                                                "2026-10-09"]})
 
     def test_last_closed(self):
         self.assertEqual(self.dumped(LastClosed(date(2026, 7, 24), 156.0, Quality.GOOD)),
-                         {"date": "2026-07-24", "c": 156.0})
+                         {"date": "2026-07-24", "c": 156.0, "status": "good",
+                          "excluded_sessions": []})
+
+    def test_a_reading_left_without_sessions_is_uncertain_and_names_them(self):
+        lc = LastClosed(date(2026, 10, 2), 102.0, Quality((date(2026, 10, 6), date(2026, 10, 5))))
+        self.assertEqual(self.dumped(lc), {"date": "2026-10-02", "c": 102.0, "status": "uncertain",
+                                           "excluded_sessions": ["2026-10-05", "2026-10-06"]})
 
     def test_atr_names_its_interval_only_when_it_has_one(self):
         a = AtrReading(n=2, method="wilder", value=3.5, bars_used=5, as_of=date(2026, 1, 7),
                        short_history=True, interval=None, quality=Quality.GOOD)
         self.assertEqual(self.dumped(a), {"n": 2, "method": "wilder", "value": 3.5, "bars_used": 5,
-                                          "as_of": "2026-01-07", "short_history": True})
+                                          "as_of": "2026-01-07", "short_history": True,
+                                          "status": "good", "excluded_sessions": []})
 
     def test_swing_lows_without_an_interval(self):
         s = SwingLows(each_side=2, window_first_session=date(2026, 1, 1),
@@ -280,7 +298,8 @@ class TestToJson(unittest.TestCase):
             "detected": [{"date": "2026-01-03", "low_price": 8.0,
                           "higher_than_previous_row_low": None, "sessions_after_in_window": 6,
                           "lowest_low_in_those_sessions": 7.0,
-                          "undercut_by_later_session": True}]})
+                          "undercut_by_later_session": True}],
+            "status": "good", "excluded_sessions": []})
 
     def test_anything_else_is_not_serializable(self):
         with self.assertRaises(TypeError):
@@ -296,12 +315,12 @@ class TestOutputPinnedAt040(unittest.TestCase):
 
     ARGV = ["PKN.PL", "--atr", "--swings"]
     NOT_COMPARED = {"generated", "data_note"}
-    NEW_KEYS = {"trusted", "untrusted_reason"}
+    NEW_KEYS = {"trusted", "untrusted_reason", "status", "excluded_sessions"}
 
-    def output(self):
+    def output(self, argv=ARGV):
         source = quotes.build_source(False, fetch=lambda sym, rng: (load_yahoo("PKN"), None),
                                      sleep=lambda s: None)
-        return run(self.ARGV, source)
+        return run(argv, source)
 
     def assertPinnedPlusNewKeys(self, pinned, got, path="$"):
         if isinstance(pinned, dict):
@@ -333,11 +352,89 @@ class TestOutputPinnedAt040(unittest.TestCase):
         self.assertTrue(bars)
         self.assertEqual({(b["trusted"], "untrusted_reason" in b) for b in bars}, {(True, False)})
 
+    def test_without_placeholders_every_derived_value_is_good(self):
+        for interval in ("d", "w", "m"):
+            rec = self.output([*self.ARGV, "--interval", interval])["quotes"]["PKN.PL"]
+            derived = [rec["last_closed"], rec["swing_lows"]]
+            derived += [rec["atr"]] if rec["atr"] else []          # MN: too short for ATR(14)
+            derived += rec["bars"] if interval != "d" else []
+            with self.subTest(interval=interval):
+                self.assertEqual({(d["status"], tuple(d["excluded_sessions"])) for d in derived},
+                                 {("good", ())})
+
     def test_the_comparison_catches_a_changed_value_and_an_unannounced_key(self):
         pinned = {"a": [{"c": 1.0}]}
         for got in ({"a": [{"c": 1}]}, {"a": [{"c": 1.0, "surprise": 0}]}, {"a": [{"c": 2.0}]}):
             with self.subTest(got=got), self.assertRaises(AssertionError):
                 self.assertPinnedPlusNewKeys(pinned, got)
+
+
+class TestPlaceholderSessionsEndToEnd(unittest.TestCase):
+    """The incident as the CLI met it: Yahoo served 10-05..10-09 as placeholders (one price, no
+    volume), the own store holds the real sessions up to 10-02. Built by hand: the store fixture
+    has 10-05..10-09 itself, so it would hide the gap."""
+
+    REAL = [date(2026, 9, 1) + timedelta(days=i) for i in range(32)]
+    REAL = [d for d in REAL if d.weekday() < 5]                       # 09-01 .. 10-02
+    GAP = [date(2026, 10, d) for d in (5, 6, 7, 8, 9)]
+
+    @staticmethod
+    def ohlcv(i):
+        c = 100 + (i * 7) % 11                                        # a close that moves
+        return c - 1, c + 2, c - 3, c, 1000 + i
+
+    def yahoo_response(self):
+        rows = [self.ohlcv(i) for i in range(len(self.REAL))]
+        last_close = rows[-1][3]
+        rows += [(last_close, last_close, last_close, last_close, 0)] * len(self.GAP)
+        o, h, l, c, v = (list(col) for col in zip(*rows))  # noqa: E741
+        return {"meta": {"gmtoffset": 7200, "symbol": "PKN.WA"},
+                "timestamp": [warsaw(d.year, d.month, d.day, 9 * 3600) for d in self.REAL + self.GAP],
+                "indicators": {"quote": [{"open": o, "high": h, "low": l, "close": c, "volume": v}]}}
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store = self.tmp / "store"
+        self.store.mkdir()
+        lines = ["date,open,high,low,close,volume,source"]
+        lines += [f"{d.isoformat()},{o},{h},{l},{c},{v},stooq"
+                  for i, d in enumerate(self.REAL) for o, h, l, c, v in [self.ohlcv(i)]]
+        (self.store / "PLPKN0000018.csv").write_text("\n".join(lines) + "\n")
+
+    def output(self, *argv):
+        response = self.yahoo_response()
+
+        def build(cache, *, store_dir=None):
+            return quotes.build_source(cache, store_dir=store_dir, cache_dir=self.tmp / "cache",
+                                       fetch=lambda sym, rng: (response, None),
+                                       sleep=lambda s: None)
+
+        doc = run(["--store", str(self.store), "PKN.PL", *argv], build=build,
+                  today=date(2026, 10, 10))
+        return doc["quotes"]["PKN.PL"]
+
+    def test_store_sessions_are_trusted_and_placeholders_are_marked(self):
+        rec = self.output("--bars", "7")
+        self.assertEqual([(b["date"], b["source"], b["trusted"], b.get("untrusted_reason"))
+                          for b in rec["bars"]],
+                         [("2026-10-01", "store", True, None), ("2026-10-02", "store", True, None),
+                          *((d.isoformat(), "yahoo", False, "placeholder") for d in self.GAP)])
+
+    def test_atr_and_last_closed_are_as_of_the_last_real_session_and_name_the_gap(self):
+        rec = self.output("--atr")
+        gap = [d.isoformat() for d in self.GAP]
+        self.assertEqual((rec["atr"]["as_of"], rec["atr"]["status"], rec["atr"]["excluded_sessions"]),
+                         ("2026-10-02", "uncertain", gap))
+        last_real_close = float(self.ohlcv(len(self.REAL) - 1)[3])
+        self.assertEqual(rec["last_closed"], {"date": "2026-10-02", "c": last_real_close,
+                                              "status": "uncertain", "excluded_sessions": gap})
+
+    def test_the_week_of_placeholders_has_no_value(self):
+        week = self.output("--interval", "w")["bars"][-1]
+        self.assertEqual(week, {"date": "2026-10-05", "o": None, "h": None, "l": None, "c": None,
+                                "v": None, "complete": True, "status": "no_value",
+                                "excluded_sessions": [d.isoformat() for d in self.GAP]})
 
 
 class TestFlagsReachTheCompositionRoot(unittest.TestCase):

@@ -18,7 +18,7 @@ from market_data.adapters.yahoo import range_for_days
 from market_data.indicators import (AtrReading, LastClosed, SwingLow, SwingLows, _period,
                                     aggregate, atr_wilder, bars_needed, calendar_days, last_closed,
                                     swing_lows)
-from market_data.model import PeriodBar, Quality, Volume
+from market_data.model import PeriodBar, Quality, Status, Trust, Volume
 from quotes import quote_record
 
 D = date.fromisoformat
@@ -313,16 +313,144 @@ class TestSwingLows(unittest.TestCase):
         self.assertEqual(bars_needed(6, 14, 2), 71)
 
 
+PLACEHOLDER = Trust.untrusted("placeholder")
+
+
+def placeholder(b, at):
+    """Session `b` as the vendor served it when it had no trades: one price in all four fields,
+    no volume, complete, and marked untrusted by its source."""
+    return dataclasses.replace(b, open=at, high=at, low=at, close=at, volume=Volume(0),
+                               complete=True, trust=PLACEHOLDER)
+
+
+def with_placeholders(daily, k=5):
+    """The last `k` sessions replaced by placeholders at the close of the session before them."""
+    at = daily[-k - 1].close
+    return [*daily[:-k], *(placeholder(b, at) for b in daily[-k:])]
+
+
+def sessions(bars):
+    return tuple(b.session for b in bars)
+
+
 class TestReadingsCarryQuality(unittest.TestCase):
-    """Every reading carries its quality. All sources vouch for every session for now, so it is
-    GOOD throughout; what lowers it comes with the sources' own trust rule."""
+    """Without a session the source does not vouch for, every reading is GOOD and every value is the
+    one it always was (the golden values above are read on the same series)."""
 
     def test_every_reading_is_good(self):
         daily = pipeline("PKN", "d")
         readings = [atr_wilder(daily), swing_lows(daily), last_closed(daily),
                     *aggregate(daily, "w", FROZEN_DATE)]
         self.assertEqual({r.quality for r in readings}, {Quality.GOOD})
+        self.assertEqual({b.status for b in aggregate(daily, "w", FROZEN_DATE)}, {Status.GOOD})
         self.assertIsInstance(swing_lows(daily), SwingLows)
+
+
+class TestPlaceholderSessions(unittest.TestCase):
+    """The vendor once served five placeholder sessions in a row (ADR 0002). A derived value is read
+    from the sessions the source vouches for only, and names the ones it left out. Here PKN's last
+    week, 07-20..07-24, is five placeholders at the close of Friday 07-17."""
+
+    def setUp(self):
+        self.daily = pipeline("PKN", "d")
+        self.clean = self.daily[:-5]                     # up to the last real session, 07-17
+        self.served = with_placeholders(self.daily)
+        self.left_out = sessions(self.daily[-5:])
+
+    def test_atr_is_the_atr_as_of_the_last_real_session(self):
+        a, clean = atr_wilder(self.served, 14), atr_wilder(self.clean, 14)
+        self.assertEqual((a.value, a.as_of, a.bars_used), (clean.value, clean.as_of, clean.bars_used))
+        self.assertEqual(a.as_of, D("2026-07-17"))
+        self.assertEqual(a.quality, Quality(self.left_out))
+        self.assertEqual(a.quality.status, Status.UNCERTAIN)
+        # ...and the test has teeth: read as real sessions, the placeholders pull ATR down
+        trusted = [dataclasses.replace(b, trust=Trust.TRUSTED) for b in self.served]
+        self.assertLess(atr_wilder(trusted, 14).value, clean.value)
+
+    def test_a_gap_inside_the_window_is_left_out_named_and_the_window_reaches_one_further(self):
+        gap = len(self.daily) - 30
+        served = [*self.daily[:gap], placeholder(self.daily[gap], self.daily[gap - 1].close),
+                  *self.daily[gap + 1:]]
+        without = [*self.daily[:gap], *self.daily[gap + 1:]]
+        a = atr_wilder(served, 14)
+        self.assertEqual(a, dataclasses.replace(atr_wilder(without, 14),
+                                                quality=Quality((self.daily[gap].session,))))
+        self.assertEqual(a.bars_used, 71)
+        s = swing_lows(served, 2, atr_n=14)
+        self.assertEqual((s.window_first_session, s.window_sessions),
+                         (self.daily[-72].session, 71))
+        self.assertEqual(s.quality, Quality((self.daily[gap].session,)))
+
+    def test_no_swing_low_is_confirmed_by_a_placeholder(self):
+        s, clean = swing_lows(self.served, 2), swing_lows(self.clean, 2)
+        self.assertEqual(s, dataclasses.replace(clean, quality=Quality(self.left_out)))
+        self.assertEqual((s.window_last_session, s.detectable_through),
+                         (D("2026-07-17"), D("2026-07-15")))
+        # ...and the test has teeth: read as real sessions, the placeholders confirm 07-17
+        trusted = [dataclasses.replace(b, trust=Trust.TRUSTED) for b in self.served]
+        self.assertIn(D("2026-07-17"), [r.session for r in swing_lows(trusted, 2).detected])
+
+    def test_a_low_is_confirmed_once_real_sessions_follow_the_gap(self):
+        """Lows 10, 9, 8 (close 8.5), then two placeholders at 8.5: as real sessions they would
+        confirm the 8. Not as placeholders; two real sessions with higher lows after them do."""
+        real = [daily_bar(f"2026-01-0{i + 1}", lo, lo + 1, lo, lo + 0.5)
+                for i, lo in enumerate([10, 9, 8])]
+        gap = [placeholder(daily_bar(f"2026-01-0{d}"), price(8.5)) for d in (4, 5)]
+        after = [daily_bar("2026-01-06", 9, 10, 9, 9.5), daily_bar("2026-01-07", 10, 11, 10, 10.5)]
+        self.assertEqual(swing_lows([*real, *gap], 2).detected, ())
+        s = swing_lows([*real, *gap, *after], 2)
+        self.assertEqual(s.detected, (SwingLow(D("2026-01-03"), 8.0, None, 2, 9.0, False),))
+        self.assertEqual(s.quality, Quality((D("2026-01-04"), D("2026-01-05"))))
+
+    def test_last_closed_is_the_last_real_session(self):
+        self.assertEqual(last_closed(self.served),
+                         LastClosed(D("2026-07-17"), 146.2, Quality(self.left_out)))
+
+    def test_last_closed_reads_the_whole_series_when_the_slice_is_all_placeholders(self):
+        rec = quote_record(self.served, "d", 5, FROZEN_DATE)
+        self.assertEqual(sessions(rec["bars"]), self.left_out)
+        self.assertEqual(rec["last_closed"],
+                         LastClosed(D("2026-07-17"), 146.2, Quality(self.left_out)))
+
+    def test_a_week_of_placeholders_stays_in_the_series_with_no_value(self):
+        week = aggregate(self.served, "w", FROZEN_DATE)[-1]
+        self.assertEqual(week, PeriodBar(D("2026-07-20"), None, None, None, None, None, True,
+                                         Quality(self.left_out)))
+        self.assertEqual(week.status, Status.NO_VALUE)
+
+    def test_a_week_with_two_real_sessions_is_read_from_those_two(self):
+        served = with_placeholders(self.daily, 3)                    # Wed..Fri placeholders
+        week = aggregate(served, "w", FROZEN_DATE)[-1]
+        mon_tue = aggregate(self.daily[:-3], "w", FROZEN_DATE)[-1]
+        self.assertEqual(week, dataclasses.replace(mon_tue, quality=Quality(sessions(self.daily[-3:]))))
+        self.assertEqual(week.status, Status.UNCERTAIN)
+
+    def test_a_placeholder_friday_still_closes_the_week_on_friday_evening(self):
+        served = with_placeholders(self.daily, 1)
+        week = aggregate(served, "w", D("2026-07-24"))[-1]
+        self.assertTrue(week.complete)
+        self.assertEqual((week.close, week.quality), (self.daily[-2].close,
+                                                      Quality((D("2026-07-24"),))))
+
+    def test_weekly_readings_skip_the_week_with_no_value_and_name_its_sessions(self):
+        weeks = aggregate(self.served, "w", FROZEN_DATE)
+        clean = aggregate(self.clean, "w", FROZEN_DATE)
+        a = atr_wilder(weeks, 14, "weekly")
+        self.assertEqual(a, dataclasses.replace(atr_wilder(clean, 14, "weekly"),
+                                                quality=Quality(self.left_out)))
+        self.assertEqual(a.as_of, D("2026-07-13"))
+        self.assertEqual(last_closed(weeks),
+                         dataclasses.replace(last_closed(clean), quality=Quality(self.left_out)))
+
+    def test_a_forming_untrusted_bar_enters_no_period(self):
+        """Before the open the vendor serves today as one flat price with no volume. It is not part
+        of the week in progress: not its values, and not a session it left out either, since the
+        session has not ended."""
+        mon_tue = [daily_bar("2026-07-20", 10, 12, 9, 11, 100),
+                   daily_bar("2026-07-21", 11, 13, 10.5, 12.5, 200)]
+        forming = daily_bar("2026-07-22", 20, 20, 20, 20, 0, complete=False, trust=PLACEHOLDER)
+        self.assertEqual(aggregate([*mon_tue, forming], "w", D("2026-07-22")),
+                         aggregate(mon_tue, "w", D("2026-07-22")))
 
 
 class TestStooqOracle(unittest.TestCase):

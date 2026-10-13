@@ -100,7 +100,7 @@ there, else the first one's. A source that answered with nothing is not a failur
 - `xtb` = the **execution-venue ticker** for this instrument, or `null` when the map has none.
   Reach for it when you keyed by ISIN and need the symbol a state file names. Never guessed: `null`
   means the broker does not list it, so confirm there rather than inferring from the GPW root.
-- `last_closed` = the most recent **completed** D1 candle — the number to reason on.
+- `last_closed` = the most recent **completed**, trusted D1 candle — the number to reason on.
 - `atr` (only with `--atr`) = `{n, method, interval, value, bars_used, as_of, short_history}` — Wilder's
   ATR on the requested interval, the single definition every caller shares. Computed from **complete**
   candles over a fixed window (`5 x n + 1`), so the same instrument reads the same ATR for a 6-bar
