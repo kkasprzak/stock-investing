@@ -3,17 +3,20 @@ symbol suffixes, its range buckets and the on-disk cache of its daily series."""
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
-from market_data.model import DateRange, Instrument
+from market_data.model import DailyBar, DateRange, Instrument, Price, Trust, Volume
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 
+SOURCE = "yahoo"                                # the adapter's name, on every bar it serves
 THROTTLE = 1.5                                  # pause after each live Yahoo request (s)
 
 # Yahoo fetch-range buckets (label, calendar-day span).
@@ -131,12 +134,32 @@ def build_daily(r, today=None, now=None):
     return stamp_complete(bars, today, closed_today)
 
 
+def _price(x) -> Price | None:
+    """Yahoo's number as a Price, rounded as build_daily rounds so float(price.value) gives back the
+    same float. No price at all when it cannot be one: Yahoo sometimes sends 0 (and a tiny value
+    rounds to 0.0), and an exception out of the adapter would be a bug, not an answer."""
+    if x is None or not math.isfinite(x):
+        return None
+    x = round(x, 4)
+    return Price(Decimal(repr(x))) if x > 0 else None
+
+
+def to_bar(row: dict) -> DailyBar:
+    """A row of build_daily (or of the cache, which holds the same rows) as the port's DailyBar."""
+    v = row.get("v")
+    return DailyBar(session=date.fromisoformat(row["date"]), open=_price(row.get("o")),
+                    high=_price(row.get("h")), low=_price(row.get("l")),
+                    close=_price(row.get("c")),
+                    volume=Volume(int(v)) if v is not None and math.isfinite(v) and v >= 0 else None,
+                    complete=row["complete"], source=SOURCE, trust=Trust.TRUSTED)
+
+
 class YahooQuotes:
     """QuoteSource over Yahoo's v8 chart endpoint. `fetch`, `sleep` and `now` are injectable so tests
     run offline; cache_dir=None (the default) never touches the disk — the fail-safe: a forgotten
     --cache means slower, never stale."""
 
-    name = "yahoo"
+    name = SOURCE
     description = "Yahoo Finance v8 chart (~15 min delayed)"
 
     def __init__(self, *, fetch=fetch_chart, cache_dir: Path | None = None,
@@ -169,9 +192,7 @@ class YahooQuotes:
             raise QuoteSourceUnavailableError((SourceFailure(self.name, how),), (resolution,))
         if how == "live":
             self._sleep(self._throttle)                # throttle real fetches only
-        for b in bars:
-            b.setdefault("source", self.name)          # after the cache write: stored bars lack it
-        return QuoteSeries(tuple(bars), (resolution,))
+        return QuoteSeries(tuple(to_bar(b) for b in bars), (resolution,))
 
     def _daily(self, yahoo, rng, today, now):
         """Daily bars for `yahoo` over range `rng`. Returns (bars, "live"|"cache") on success, or

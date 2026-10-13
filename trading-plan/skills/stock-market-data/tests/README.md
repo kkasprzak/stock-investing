@@ -15,21 +15,22 @@ RUN_LIVE_SMOKE=1 python3 -m unittest discover -s trading-plan/skills/stock-marke
 One test file per module of `scripts/`, plus shared support:
 
 ```
-support.py              frozen clock (FROZEN_TODAY, FROZEN_NOW, GPW_CLOSE, warsaw()), TOL, fixture
-                        loaders (load_yahoo, load_stooq), DIVIDEND_WEEKS, pipeline(), FakeSource;
-                        puts ../scripts on sys.path
+support.py              frozen clock (FROZEN_TODAY, FROZEN_DATE, FROZEN_NOW, GPW_CLOSE, warsaw()), TOL,
+                        fixture loaders (load_yahoo, load_stooq), DIVIDEND_WEEKS, pipeline(), bar
+                        builders (daily_bar, flat_bar, price, num), FakeSource; puts ../scripts on sys.path
 test_model.py           market_data/model.py — DateRange, Interval, Instrument, Isin, Price, Volume, DailyQuote
-test_store_file.py      market_data/store_file.py — the store's file schema: read, write, merge, StoredQuote, to_bar
+test_store_file.py      market_data/store_file.py — the store's file schema: read, write, merge, StoredQuote
 test_store.py           market_data/adapters/store.py — StoreQuotes: what the store answers, no_store, malformed,
                         the store ahead of a lower source in a chain
 test_import_stooq.py    market_data/importers/stooq.py and scripts/import_quotes.py — parse, snap, the real-export
                         guards and ATR pins, the importer end to end on a temp store, its usage errors
 test_indicators.py      market_data/indicators.py — _period, aggregate, last_closed, ATR, swing lows, Stooq oracle
 test_quote_chain.py     market_data/quote_chain.py — QuoteChain: trust order, gap filling, sources that did not answer
-test_yahoo.py           market_data/adapters/yahoo.py — resolve, range buckets, cache, session close, backfill, live smoke
+test_yahoo.py           market_data/adapters/yahoo.py — resolve, range buckets, cache, session close, backfill,
+                        to_bar (row to DailyBar, unusable numbers to gaps), live smoke
 test_symbol_index.py    market_data/adapters/symbol_index.py — lookup by ISIN / broker ticker, broker symbol
 test_cli.py             scripts/quotes.py — build_source (the composition root), main() over an injected source,
-                        flags reaching build, the 0.4.0 output pin
+                        flags reaching build, to_json, the 0.4.0 output pin
 fixtures/               see below
 ```
 
@@ -80,7 +81,8 @@ network and without touching the real cache. The store is a directory on disk: t
 
 The pipeline depends on live Yahoo and the wall clock (the `complete` flag). Both are frozen:
 - **Yahoo** → captured raw responses in `fixtures/yahoo_*.json` (trimmed ~7 months).
-- **clock** → `FROZEN_TODAY = 2026-07-25` / `FROZEN_NOW` injected into `build_daily`/`aggregate`;
+- **clock** → `FROZEN_TODAY = 2026-07-25` / `FROZEN_NOW` injected into `build_daily`, `FROZEN_DATE`
+  (the same day as a date) into `aggregate`;
   session-boundary cases build their own epochs with `warsaw(...)`.
 
 Expected OHLC is anchored to `fixtures/stooq_{pkn,kgh,lpp}_*.csv` — the independent source (Stooq) we cross-checked

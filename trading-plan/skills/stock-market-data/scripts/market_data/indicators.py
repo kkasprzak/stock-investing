@@ -1,17 +1,73 @@
 """Pure functions over bar series: weekly/monthly aggregation, Wilder ATR, swing lows, last close.
 
-Bars are dicts {date, o, h, l, c, v, complete} (daily bars also carry `source`), newest last. Nothing here fetches or knows a vendor.
+Bars are DailyBar (from the port) or PeriodBar (from aggregate), newest last; each function returns
+its reading as a type, which the CLI turns into JSON. Arithmetic runs on floats, as it always has, so
+the numbers do not move. Nothing here fetches or knows a vendor.
 """
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import Sequence, Union
 
-from market_data.model import Interval
+from market_data.model import DailyBar, Interval, PeriodBar, Price, Quality, Volume
 
 ATR_DEFAULT_N = 14                              # Wilder's default lookback
 ATR_WARMUP = 5                                  # x n candles of run-up before ATR is settled
 SWING_SESSIONS_DEFAULT = 2                      # sessions each side that must have a higher low
+
+Bar = Union[DailyBar, PeriodBar]
+
+
+@dataclass(frozen=True)
+class AtrReading:
+    n: int
+    method: str
+    value: float
+    bars_used: int
+    as_of: date                 # the newest candle it read
+    short_history: bool
+    interval: str | None        # the interval label, when the caller named one
+    quality: Quality
+
+
+@dataclass(frozen=True)
+class SwingLow:
+    session: date               # on W1/MN, the period's first day
+    low_price: float
+    higher_than_previous_row_low: bool | None
+    sessions_after_in_window: int
+    lowest_low_in_those_sessions: float
+    undercut_by_later_session: bool
+
+
+@dataclass(frozen=True)
+class SwingLows:
+    each_side: int
+    window_first_session: date
+    window_last_session: date
+    window_sessions: int
+    detectable_through: date | None
+    detected: tuple[SwingLow, ...]
+    interval: str | None
+    quality: Quality
+
+
+@dataclass(frozen=True)
+class LastClosed:
+    session: date               # on W1/MN, the period's first day
+    close: float
+    quality: Quality
+
+
+def _day(b: Bar) -> date:
+    """The date a bar is keyed by: its session, or its period's first day."""
+    return b.session if isinstance(b, DailyBar) else b.period_start
+
+
+def _f(p: Price) -> float:
+    return float(p.value)
 
 
 def calendar_days(interval, bars):
@@ -20,51 +76,52 @@ def calendar_days(interval, bars):
     return math.ceil(bars * Interval(interval).calendar_factor)
 
 
-def _period(date_str, interval):
-    """(label, period_end) for a daily date grouped weekly/monthly.
+def _period(d: date, interval) -> tuple[date, date]:
+    """(label, period_end) for a daily session grouped weekly/monthly.
     label = period start (Monday / 1st); period_end = last business/calendar day (Friday / month-end)."""
     interval = Interval(interval)
-    d = date.fromisoformat(date_str)
     if interval is Interval.WEEKLY:
         monday = d - timedelta(days=d.weekday())
-        return monday.isoformat(), monday + timedelta(days=4)          # Mon .. Fri
+        return monday, monday + timedelta(days=4)                      # Mon .. Fri
     nxt = date(d.year + 1, 1, 1) if d.month == 12 else date(d.year, d.month + 1, 1)
-    return f"{d.year}-{d.month:02d}-01", nxt - timedelta(days=1)         # 1st .. month-end
+    return date(d.year, d.month, 1), nxt - timedelta(days=1)           # 1st .. month-end
 
 
-def aggregate(daily, interval, today):
+def aggregate(daily: Sequence[DailyBar], interval, today: date) -> list[PeriodBar]:
     """Roll daily bars up into weekly/monthly candles, newest last. o = first day's open, h/l = period
-    extremes, c = last day's close, v = summed volume. A period is complete iff its last business/
-    calendar day is before today, or that day has been reached and its own daily bar is already closed
-    — so a week reads complete on Friday evening, not only on Saturday."""
+    extremes, c = last day's close, v = summed volume, each column over the days that have it. A
+    period is complete iff its last business/calendar day is before today, or that day has been
+    reached and its own daily bar is already closed — so a week reads complete on Friday evening, not
+    only on Saturday."""
     interval = Interval(interval)
-    today_d = date.fromisoformat(today)
-    newest = date.fromisoformat(daily[-1]["date"]) if daily else None
+    newest = daily[-1].session if daily else None
     order, groups = [], {}
     for b in daily:
-        label, end = _period(b["date"], interval)
+        label, end = _period(b.session, interval)
         g = groups.get(label)
         if g is None:
-            g = groups[label] = {"end": end, "bars": []}
+            g = groups[label] = (end, [])
             order.append(label)
-        g["bars"].append(b)
+        g[1].append(b)
 
     out = []
     for label in order:
-        g = groups[label]
-        def col(k):
-            return [x[k] for x in g["bars"] if x.get(k) is not None]
-        opens, highs, lows, closes, vols = col("o"), col("h"), col("l"), col("c"), col("v")
-        out.append({
-            "date": label,
-            "o": opens[0] if opens else None,
-            "h": max(highs) if highs else None,
-            "l": min(lows) if lows else None,
-            "c": closes[-1] if closes else None,
-            "v": sum(vols) if vols else None,
-            "complete": g["end"] < today_d or (newest is not None and g["end"] <= newest
-                                               and g["bars"][-1]["complete"]),
-        })
+        end, bars = groups[label]
+        opens = [b.open for b in bars if b.open is not None]
+        highs = [b.high for b in bars if b.high is not None]
+        lows = [b.low for b in bars if b.low is not None]
+        closes = [b.close for b in bars if b.close is not None]
+        vols = [b.volume.value for b in bars if b.volume is not None]
+        out.append(PeriodBar(
+            period_start=label,
+            open=opens[0] if opens else None,
+            high=max(highs, key=lambda p: p.value) if highs else None,
+            low=min(lows, key=lambda p: p.value) if lows else None,
+            close=closes[-1] if closes else None,
+            volume=Volume(sum(vols)) if vols else None,
+            complete=end < today or (newest is not None and end <= newest and bars[-1].complete),
+            quality=Quality.GOOD,
+        ))
     return out
 
 
@@ -85,50 +142,52 @@ def bars_needed(bars, atr_n=None, swings=None):
     return max(bars, series_window(atr_n)) if (atr_n or swings) else bars
 
 
-def atr_wilder(bars, n=ATR_DEFAULT_N, interval=None):
-    """Wilder's ATR(n) over a series (newest last), as a self-describing record — or None when there
-    are fewer than n+1 usable candles. Method is J. Welles Wilder Jr., New Concepts in Technical
-    Trading Systems (1978): TR = max(H-L, |H-prevC|, |prevC-L|), seed = mean of the first n TRs, then
+def atr_wilder(bars: Sequence[Bar], n=ATR_DEFAULT_N, interval=None) -> AtrReading | None:
+    """Wilder's ATR(n) over a series (newest last) — or None when there are fewer than n+1 usable
+    candles. Method is J. Welles Wilder Jr., New Concepts in Technical Trading Systems (1978):
+    TR = max(H-L, |H-prevC|, |prevC-L|), seed = mean of the first n TRs, then
     ATR = (prevATR x (n-1) + TR) / n.
 
-    Only **complete** candles count: a forming bar's H/L keep moving, so it distorts both the TR and
-    everything measured against it. `short_history` marks a value computed on less than the ATR_WARMUP
-    run-up — still reported (never a silent [NO DATA]), but flagged as not yet settled."""
-    usable = [b for b in bars if b.get("complete") and b.get("h") is not None
-              and b.get("l") is not None and b.get("c") is not None]
+    Only **complete** candles with high, low and close count: a forming bar's H/L keep moving, so it
+    distorts both the TR and everything measured against it. `short_history` marks a value computed
+    on less than the ATR_WARMUP run-up — still reported (never a silent [NO DATA]), but flagged as not
+    yet settled."""
+    usable = [b for b in bars if b.complete and b.high is not None
+              and b.low is not None and b.close is not None]
     usable = usable[-series_window(n):]          # fixed window: a longer fetch must not shift the value
     if len(usable) < n + 1:
         return None
-    trs = [max(usable[i]["h"] - usable[i]["l"],
-               abs(usable[i]["h"] - usable[i - 1]["c"]),
-               abs(usable[i - 1]["c"] - usable[i]["l"])) for i in range(1, len(usable))]
+    h = [_f(b.high) for b in usable]
+    lo = [_f(b.low) for b in usable]
+    c = [_f(b.close) for b in usable]
+    trs = [max(h[i] - lo[i], abs(h[i] - c[i - 1]), abs(c[i - 1] - lo[i]))
+           for i in range(1, len(usable))]
     atr = sum(trs[:n]) / n                                  # Wilder's seed
     for tr in trs[n:]:
         atr = (atr * (n - 1) + tr) / n
-    rec = {"n": n, "method": "wilder", "value": round(atr, 4), "bars_used": len(usable),
-           "as_of": usable[-1]["date"], "short_history": len(trs) < ATR_WARMUP * n}
-    if interval:
-        rec["interval"] = interval
-    return rec
+    return AtrReading(n=n, method="wilder", value=round(atr, 4), bars_used=len(usable),
+                      as_of=_day(usable[-1]), short_history=len(trs) < ATR_WARMUP * n,
+                      interval=interval, quality=Quality.GOOD)
 
 
-def swing_lows(bars, each_side=SWING_SESSIONS_DEFAULT, interval=None, atr_n=None):
-    """Confirmed swing lows over a series (newest last), as a self-describing record — or None when
-    the series carries no usable candle. A swing low is a session whose low the `each_side` sessions
-    before **and** after it did not reach, so it cannot be read until that many sessions have closed
-    after it (`detectable_through` marks that edge).
+def swing_lows(bars: Sequence[Bar], each_side=SWING_SESSIONS_DEFAULT, interval=None,
+               atr_n=None) -> SwingLows | None:
+    """Confirmed swing lows over a series (newest last) — or None when the series carries no usable
+    candle. A swing low is a session whose low the `each_side` sessions before **and** after it did
+    not reach, so it cannot be read until that many sessions have closed after it
+    (`detectable_through` marks that edge).
 
     Every confirmed low is reported, including ones lower than the previous — this layer describes the
     series, it does not pick the one a trailing stop may use. The two derived fields carry what that
     choice needs: `higher_than_previous_row_low` compares with the preceding row, and
     `undercut_by_later_session` says whether price has since traded below the low (strict `<`, so an
-    exact retest is not an undercut). Only **complete** candles count: a forming bar's low keeps
-    moving, so it can neither be a swing low nor undercut one."""
-    usable = [b for b in bars if b.get("complete") and b.get("l") is not None]
+    exact retest is not an undercut). Only **complete** candles with a low count: a forming bar's low
+    keeps moving, so it can neither be a swing low nor undercut one."""
+    usable = [b for b in bars if b.complete and b.low is not None]
     usable = usable[-series_window(atr_n):]      # the same window ATR reads — see series_window()
     if not usable:
         return None
-    lows = [b["l"] for b in usable]
+    lows = [_f(b.low) for b in usable]
     detected = []
     for i in range(each_side, len(usable) - each_side):
         low = lows[i]
@@ -136,27 +195,26 @@ def swing_lows(bars, each_side=SWING_SESSIONS_DEFAULT, interval=None, atr_n=None
             continue
         after = lows[i + 1:]
         lowest_after = min(after)
-        detected.append({
-            "date": usable[i]["date"],
-            "low_price": low,
-            "higher_than_previous_row_low": None if not detected else low > detected[-1]["low_price"],
-            "sessions_after_in_window": len(after),
-            "lowest_low_in_those_sessions": lowest_after,
-            "undercut_by_later_session": lowest_after < low,
-        })
-    rec = {"sessions_each_side_with_higher_lows": each_side,
-           "window_first_session": usable[0]["date"], "window_last_session": usable[-1]["date"],
-           "window_sessions": len(usable),
-           "detectable_through": usable[-(each_side + 1)]["date"] if len(usable) > each_side else None,
-           "detected": detected}
-    if interval:
-        rec = {"candle_interval": interval, **rec}
-    return rec
+        detected.append(SwingLow(
+            session=_day(usable[i]),
+            low_price=low,
+            higher_than_previous_row_low=None if not detected else low > detected[-1].low_price,
+            sessions_after_in_window=len(after),
+            lowest_low_in_those_sessions=lowest_after,
+            undercut_by_later_session=lowest_after < low,
+        ))
+    return SwingLows(
+        each_side=each_side,
+        window_first_session=_day(usable[0]), window_last_session=_day(usable[-1]),
+        window_sessions=len(usable),
+        detectable_through=_day(usable[-(each_side + 1)]) if len(usable) > each_side else None,
+        detected=tuple(detected), interval=interval, quality=Quality.GOOD)
 
 
-def last_closed(bars):
-    """Most recent complete bar with a close — the number the checks want. None if none."""
+def last_closed(bars: Sequence[Bar]) -> LastClosed | None:
+    """Most recent complete bar with a close — the number the checks want. None if none. Read over
+    the whole series the caller has, not the slice it shows: a short slice would hide the close."""
     for b in reversed(bars):
-        if b["complete"] and b["c"] is not None:
-            return {"date": b["date"], "c": b["c"]}
+        if b.complete and b.close is not None:
+            return LastClosed(session=_day(b), close=_f(b.close), quality=Quality.GOOD)
     return None

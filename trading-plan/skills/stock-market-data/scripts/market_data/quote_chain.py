@@ -34,10 +34,10 @@ class QuoteChain:
                 continue
             answered = True
             resolved.extend(series.resolved)
-            fresh = [b for b in series.bars if b["date"] not in taken]
+            fresh = [b for b in series.bars if b.session not in taken]
             bars.extend(fresh)
-            taken.update(b["date"] for b in fresh)      # after the whole source, not per bar
+            taken.update(b.session for b in fresh)      # after the whole source, not per bar
         if not answered:
             raise QuoteSourceUnavailableError(tuple(failures), tuple(resolved))
-        bars.sort(key=lambda b: b["date"])              # stable: same-date bars keep their order
+        bars.sort(key=lambda b: b.session)              # stable: same-date bars keep their order
         return QuoteSeries(tuple(bars), tuple(resolved), tuple(failures))

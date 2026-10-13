@@ -29,9 +29,10 @@ from market_data.adapters.store import StoreQuotes          # noqa: E402
 from market_data.adapters.symbol_index import SymbolIndex   # noqa: E402
 from market_data.adapters.yahoo import YahooQuotes, fetch_chart   # noqa: E402
 from market_data.indicators import (ATR_DEFAULT_N, SWING_SESSIONS_DEFAULT,   # noqa: E402
-                                    aggregate, atr_wilder, bars_needed, calendar_days,
-                                    last_closed, swing_lows)
-from market_data.model import DateRange, Interval           # noqa: E402
+                                    AtrReading, LastClosed, SwingLow, SwingLows, aggregate,
+                                    atr_wilder, bars_needed, calendar_days, last_closed,
+                                    swing_lows)
+from market_data.model import DailyBar, DateRange, Interval, PeriodBar   # noqa: E402
 from market_data.ports import QuoteSource, QuoteSourceUnavailableError   # noqa: E402
 from market_data.quote_chain import QuoteChain              # noqa: E402
 
@@ -61,19 +62,62 @@ def build_source(cache: bool, *, store_dir: Path | None = None, cache_dir: Path 
     return QuoteChain([*store, yahoo_source])
 
 
-def quote_record(daily, interval, bars, today, atr_n=None, swings=None):
-    """The per-symbol payload: the last `bars` candles of `interval`, their last closed one, and
-    optionally ATR and the swing lows. Both derived blocks are computed over the **whole** fetched
-    series, not the returned slice — see bars_needed()."""
+def quote_record(daily, interval, bars, today: date, atr_n=None, swings=None):
+    """The per-symbol payload: the last `bars` candles of `interval`, the last closed one, and
+    optionally ATR and the swing lows. The last closed candle and both derived blocks are read over
+    the **whole** fetched series, not the returned slice — see bars_needed(). Values are types;
+    to_json prints them."""
     interval = Interval(interval)
     series = daily if interval is Interval.DAILY else aggregate(daily, interval, today)
-    shown = series[-bars:]
-    rec = {"last_closed": last_closed(shown), "bars": shown}
+    rec = {"last_closed": last_closed(series), "bars": series[-bars:]}
     if atr_n:
         rec["atr"] = atr_wilder(series, atr_n, interval.label)
     if swings:
         rec["swing_lows"] = swing_lows(series, swings, interval.label, atr_n)
     return rec
+
+
+def _num(p):
+    return None if p is None else float(p.value)
+
+
+def _ohlcv(b):
+    return {"o": _num(b.open), "h": _num(b.high), "l": _num(b.low), "c": _num(b.close),
+            "v": None if b.volume is None else b.volume.value, "complete": b.complete}
+
+
+def to_json(obj):
+    """The output contract's shape of a bar or a reading: keys and their order as consumers read
+    them, prices as floats, dates as ISO text. Quality and trust are not printed yet. Anything else
+    raises TypeError, as json.dump's `default` must."""
+    if isinstance(obj, DailyBar):
+        return {"date": obj.session.isoformat(), **_ohlcv(obj), "source": obj.source}
+    if isinstance(obj, PeriodBar):                  # rolled up from several sources: none named
+        return {"date": obj.period_start.isoformat(), **_ohlcv(obj)}
+    if isinstance(obj, LastClosed):
+        return {"date": obj.session.isoformat(), "c": obj.close}
+    if isinstance(obj, AtrReading):
+        rec = {"n": obj.n, "method": obj.method, "value": obj.value, "bars_used": obj.bars_used,
+               "as_of": obj.as_of.isoformat(), "short_history": obj.short_history}
+        if obj.interval:
+            rec["interval"] = obj.interval
+        return rec
+    if isinstance(obj, SwingLow):
+        return {"date": obj.session.isoformat(), "low_price": obj.low_price,
+                "higher_than_previous_row_low": obj.higher_than_previous_row_low,
+                "sessions_after_in_window": obj.sessions_after_in_window,
+                "lowest_low_in_those_sessions": obj.lowest_low_in_those_sessions,
+                "undercut_by_later_session": obj.undercut_by_later_session}
+    if isinstance(obj, SwingLows):
+        through = obj.detectable_through
+        rec = {"sessions_each_side_with_higher_lows": obj.each_side,
+               "window_first_session": obj.window_first_session.isoformat(),
+               "window_last_session": obj.window_last_session.isoformat(),
+               "window_sessions": obj.window_sessions,
+               "detectable_through": through.isoformat() if through else None,
+               "detected": [to_json(r) for r in obj.detected]}
+        return {"candle_interval": obj.interval, **rec} if obj.interval else rec
+    raise TypeError(f"{type(obj).__name__} is not part of the output contract")
 
 
 def _from_yahoo(entries):
@@ -146,7 +190,6 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
     index = SymbolIndex(SYMBOLS)
     interval = Interval(args.interval)
     end = today or date.today()
-    end_iso = end.isoformat()
     # --bars <= 0 never failed and must not now: DateRange would reject an inverted range.
     days = min(max(calendar_days(interval, bars_needed(max(args.bars, 1), args.atr, args.swings)),
                    MIN_PERIOD_DAYS),
@@ -168,7 +211,7 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
             continue
         symbol, by = _yahoo_fields(series.resolved)
         quotes[tk] = {"yahoo_symbol": symbol, "xtb": xtb, "resolved_by": by, "ok": True,
-                      **quote_record(list(series.bars), interval, args.bars, end_iso, args.atr,
+                      **quote_record(list(series.bars), interval, args.bars, end, args.atr,
                                      args.swings)}
         if series.unavailable:                      # only when some source did not answer
             quotes[tk]["unavailable"] = _unavailable(series.unavailable)
@@ -184,7 +227,7 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
                      "aggregated from daily.",
         "quotes": quotes,
     }
-    json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
+    json.dump(result, sys.stdout, ensure_ascii=False, indent=2, default=to_json)
     print()
 
 

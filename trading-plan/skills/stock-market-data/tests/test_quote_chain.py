@@ -8,7 +8,7 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
-import support  # noqa: F401  (puts scripts/ on sys.path)
+from support import flat_bar as bar, num
 from market_data.model import DateRange, Instrument, Isin
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
@@ -19,9 +19,9 @@ PERIOD = DateRange(date(2026, 7, 1), date(2026, 7, 24))
 NOW = 1784973600.0
 
 
-def bar(day, close, source):
-    return {"date": day, "o": close, "h": close, "l": close, "c": close, "v": 1, "complete": True,
-            "source": source}
+def seen(bars):
+    """(ISO date, close, source) of each bar, the parts these tests are about."""
+    return [(b.session.isoformat(), num(b.close), b.source) for b in bars]
 
 
 class ChainFake:
@@ -62,7 +62,7 @@ class TestQuoteChain(unittest.TestCase):
         a = ChainFake("a", [bar("2026-07-22", 10.0, "a"), bar("2026-07-24", 12.0, "a")])
         b = ChainFake("b", [bar("2026-07-22", 99.0, "b"), bar("2026-07-23", 11.0, "b")])
         s = ask(a, b)
-        self.assertEqual([(x["date"], x["c"], x["source"]) for x in s.bars],
+        self.assertEqual(seen(s.bars),
                          [("2026-07-22", 10.0, "a"), ("2026-07-23", 11.0, "b"),
                           ("2026-07-24", 12.0, "a")])
 
@@ -71,7 +71,7 @@ class TestQuoteChain(unittest.TestCase):
         a = ChainFake("a", [bar("2026-07-24", 10.0, "a"), bar("2026-07-24", 10.5, "a")])
         b = ChainFake("b", [bar("2026-07-24", 99.0, "b")])
         s = ask(a, b)
-        self.assertEqual([(x["c"], x["source"]) for x in s.bars], [(10.0, "a"), (10.5, "a")])
+        self.assertEqual(seen(s.bars), [("2026-07-24", 10.0, "a"), ("2026-07-24", 10.5, "a")])
 
     def test_every_source_is_asked_for_the_whole_period(self):
         a = ChainFake("a", [bar("2026-07-24", 10.0, "a")])
@@ -83,7 +83,7 @@ class TestQuoteChain(unittest.TestCase):
         a = ChainFake("a", reason="timeout")
         b = ChainFake("b", [bar("2026-07-24", 11.0, "b")])
         s = ask(a, b)
-        self.assertEqual([x["source"] for x in s.bars], ["b"])
+        self.assertEqual([x.source for x in s.bars], ["b"])
         self.assertEqual(s.unavailable, (SourceFailure("a", "timeout"),))
 
     def test_both_raise_with_both_failures_and_resolutions(self):
@@ -116,9 +116,10 @@ class TestQuoteChain(unittest.TestCase):
                              bar("2026-07-24", 12.5, "a")])
         b = ChainFake("b", [bar("2026-07-22", 10.0, "b"), bar("2026-07-20", 8.0, "b")])
         s = ask(a, b)
-        self.assertEqual([(x["date"], x["c"]) for x in s.bars],
-                         [("2026-07-20", 8.0), ("2026-07-21", 9.0), ("2026-07-22", 10.0),
-                          ("2026-07-24", 12.0), ("2026-07-24", 12.5)])
+        self.assertEqual(seen(s.bars),
+                         [("2026-07-20", 8.0, "b"), ("2026-07-21", 9.0, "a"),
+                          ("2026-07-22", 10.0, "b"), ("2026-07-24", 12.0, "a"),
+                          ("2026-07-24", 12.5, "a")])
 
     def test_a_single_source_passes_through_unchanged(self):
         bars = [bar("2026-07-23", 11.0, "a"), bar("2026-07-24", 12.0, "a")]

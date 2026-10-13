@@ -1,4 +1,4 @@
-"""market_data.store_file — the candle store's file schema, the stored row, and its bar."""
+"""market_data.store_file — the candle store's file schema and the stored row."""
 from __future__ import annotations
 
 import csv
@@ -14,15 +14,9 @@ import support  # noqa: F401  (puts scripts/ on sys.path)
 from support import FX
 from market_data.model import DailyQuote, Price, Volume
 from market_data.store_file import (ENCODING, HEADER, LINE_TERMINATOR, StoredQuote, StoreFileError,
-                                    merge, read, to_bar, write)
+                                    merge, read, write)
 
 STORE_PKN = os.path.join(FX, "store", "PLPKN0000018.csv")
-
-
-def stored(o="100.50", h="104", l="98.25", c="102", v="1500000", source="stooq"):  # noqa: E741
-    q = DailyQuote(date(2026, 10, 9), Price.parse(o), Price.parse(h), Price.parse(l), Price.parse(c),
-                   Volume.parse(v))
-    return StoredQuote(q, source)
 
 
 GOOD_HEADER = b"date,open,high,low,close,volume,source\n"
@@ -149,21 +143,6 @@ class TestSchema(unittest.TestCase):
             DailyQuote(date.fromisoformat(d), Price.parse(o), Price.parse(h), Price.parse(l),
                        Price.parse(c), Volume.parse(v))
             self.assertEqual(source, "stooq")
-
-
-class TestToBar(unittest.TestCase):
-    def test_bar_shape(self):
-        self.assertEqual(to_bar(stored()),
-                         {"date": "2026-10-09", "o": 100.5, "h": 104.0, "l": 98.25, "c": 102.0,
-                          "v": 1500000, "complete": True, "source": "store"})
-
-    def test_numbers_are_float_and_int_like_yahoo(self):
-        bar = to_bar(stored())
-        self.assertEqual([type(bar[k]) for k in ("o", "h", "l", "c", "v")],
-                         [float, float, float, float, int])
-
-    def test_source_is_the_adapter_not_the_provider(self):
-        self.assertEqual(to_bar(stored(source="stooq"))["source"], "store")
 
 
 def row(day, c="102", source="stooq", o="100.50", h="104", l="98.25", v="1500000"):  # noqa: E741

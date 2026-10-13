@@ -15,10 +15,12 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from support import FX, FROZEN_TODAY, FROZEN_NOW, FakeSource, load_yahoo
+from support import (FX, FROZEN_TODAY, FROZEN_NOW, FakeSource, daily_bar, flat_bar, load_yahoo,
+                     price)
 import quotes
 from market_data.adapters.store import StoreQuotes
-from market_data.model import DateRange, Instrument, Isin
+from market_data.indicators import AtrReading, LastClosed, SwingLow, SwingLows
+from market_data.model import DateRange, Instrument, Isin, PeriodBar, Quality, Volume
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 from market_data.quote_chain import QuoteChain
@@ -68,12 +70,18 @@ class TestBuildSource(unittest.TestCase):
         source = quotes.build_source(False, store_dir=store_dir, cache_dir=self.tmp / "cache",
                                      fetch=self.fetch, sleep=lambda s: None)
         bars = source.daily(PKN_ISIN, PERIOD, now=FROZEN_NOW).bars
-        self.assertEqual([(b["date"], b["c"], b["source"]) for b in bars[-2:]],
-                         [(bars[-2]["date"], bars[-2]["c"], "yahoo"), ("2026-07-24", 1.0, "store")])
+        self.assertEqual([(b.session, b.close, b.source) for b in bars[-2:]],
+                         [(bars[-2].session, bars[-2].close, "yahoo"),
+                          (date(2026, 7, 24), price(1), "store")])
         self.assertEqual(len(self.calls), 1)
 
 
 def bar(day, close, source="yahoo"):
+    return flat_bar(day, close, source)
+
+
+def bar_json(day, close, source="yahoo"):
+    """What bar(day, close, source) prints."""
     return {"date": day, "o": close, "h": close, "l": close, "c": close, "v": 1, "complete": True,
             "source": source}
 
@@ -99,7 +107,7 @@ class TestMain(unittest.TestCase):
         rec = doc["quotes"]["PKN.PL"]
         self.assertEqual((rec["yahoo_symbol"], rec["xtb"], rec["resolved_by"], rec["ok"]),
                          ("PKN.WA", "PKN.PL", "symbols.json", True))
-        self.assertEqual(rec["bars"], [dict(b) for b in BARS[-3:]])
+        self.assertEqual(rec["bars"], [bar_json(f"2026-07-{d}", float(d)) for d in (22, 23, 24)])
         self.assertNotIn("unavailable", rec)                # empty -> absent, as today
 
     def test_with_a_store_the_header_names_it_before_yahoo(self):
@@ -168,7 +176,8 @@ class TestMain(unittest.TestCase):
         yahoo_ok = FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
         rec = run(["PKN.PL"], QuoteChain([StoreQuotes(missing), yahoo_ok]))["quotes"]["PKN.PL"]
         self.assertEqual((rec["ok"], rec["bars"][-1], rec["unavailable"]),
-                         (True, BARS[-1], [{"source": "store", "reason": "no_store"}]))
+                         (True, bar_json("2026-07-24", 24.0),
+                          [{"source": "store", "reason": "no_store"}]))
 
     def test_no_bars_from_a_source_that_answered_stays_ok(self):
         """Yahoo alone answering with nothing is an answer: ok:true, as before the store."""
@@ -209,6 +218,58 @@ class TestMain(unittest.TestCase):
     def test_negative_bars_do_not_crash(self):
         rec = run(["PKN.PL", "--bars", "-5"], FakeSource(QuoteSeries(BARS, (YAHOO_PKN,))))
         self.assertTrue(rec["quotes"]["PKN.PL"]["ok"])
+
+
+class TestToJson(unittest.TestCase):
+    """The types become JSON here and nowhere else: keys and their order as the output contract has
+    them, prices as floats, dates as ISO text. The pin below covers the daily path end to end."""
+
+    def dumped(self, obj):
+        return json.loads(json.dumps(obj, default=quotes.to_json))
+
+    def test_daily_bar_prints_its_source_and_gaps_as_null(self):
+        b = daily_bar("2026-10-09", None, 108, 102, "107.50", 1500000, source="store")
+        self.assertEqual(list(quotes.to_json(b)),
+                         ["date", "o", "h", "l", "c", "v", "complete", "source"])
+        self.assertEqual(self.dumped(b), {"date": "2026-10-09", "o": None, "h": 108.0, "l": 102.0,
+                                          "c": 107.5, "v": 1500000, "complete": True,
+                                          "source": "store"})
+
+    def test_rolled_up_bars_carry_no_source(self):
+        """Output contract (SKILL.md): daily bars name their source, W1/MN bars do not."""
+        b = PeriodBar(date(2026, 7, 20), price(10), price(13), price(8.5), price(9.5), Volume(600),
+                      True, Quality.GOOD)
+        self.assertEqual(list(quotes.to_json(b)), ["date", "o", "h", "l", "c", "v", "complete"])
+        self.assertEqual(self.dumped(b), {"date": "2026-07-20", "o": 10.0, "h": 13.0, "l": 8.5,
+                                          "c": 9.5, "v": 600, "complete": True})
+
+    def test_last_closed(self):
+        self.assertEqual(self.dumped(LastClosed(date(2026, 7, 24), 156.0, Quality.GOOD)),
+                         {"date": "2026-07-24", "c": 156.0})
+
+    def test_atr_names_its_interval_only_when_it_has_one(self):
+        a = AtrReading(n=2, method="wilder", value=3.5, bars_used=5, as_of=date(2026, 1, 7),
+                       short_history=True, interval=None, quality=Quality.GOOD)
+        self.assertEqual(self.dumped(a), {"n": 2, "method": "wilder", "value": 3.5, "bars_used": 5,
+                                          "as_of": "2026-01-07", "short_history": True})
+
+    def test_swing_lows_without_an_interval(self):
+        s = SwingLows(each_side=2, window_first_session=date(2026, 1, 1),
+                      window_last_session=date(2026, 1, 9), window_sessions=9,
+                      detectable_through=None,
+                      detected=(SwingLow(date(2026, 1, 3), 8.0, None, 6, 7.0, True),),
+                      interval=None, quality=Quality.GOOD)
+        self.assertEqual(self.dumped(s), {
+            "sessions_each_side_with_higher_lows": 2, "window_first_session": "2026-01-01",
+            "window_last_session": "2026-01-09", "window_sessions": 9, "detectable_through": None,
+            "detected": [{"date": "2026-01-03", "low_price": 8.0,
+                          "higher_than_previous_row_low": None, "sessions_after_in_window": 6,
+                          "lowest_low_in_those_sessions": 7.0,
+                          "undercut_by_later_session": True}]})
+
+    def test_anything_else_is_not_serializable(self):
+        with self.assertRaises(TypeError):
+            quotes.to_json(object())
 
 
 class TestOutputPinnedAt040(unittest.TestCase):

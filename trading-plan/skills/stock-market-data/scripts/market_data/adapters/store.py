@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from market_data import store_file
-from market_data.model import DateRange, Instrument
+from market_data.model import DailyBar, DailyQuote, DateRange, Instrument, Trust
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 
@@ -36,5 +36,11 @@ class StoreQuotes:
             print(e, file=sys.stderr)
             raise QuoteSourceUnavailableError((SourceFailure(self.name, "malformed"),),
                                               (resolution,)) from e
-        return QuoteSeries(tuple(store_file.to_bar(r) for r in rows if r.quote.session <= period.end),
+        return QuoteSeries(tuple(self._bar(r.quote) for r in rows if r.quote.session <= period.end),
                            (resolution,))
+
+    def _bar(self, q: DailyQuote) -> DailyBar:
+        """A stored session as the port's bar. Its source is this adapter, not the provider the row
+        came from; trusted, since only closed sessions someone imported are stored (ADR 0000)."""
+        return DailyBar(q.session, q.open, q.high, q.low, q.close, q.volume, complete=True,
+                        source=self.name, trust=Trust.TRUSTED)
