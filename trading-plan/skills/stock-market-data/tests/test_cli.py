@@ -20,7 +20,7 @@ from support import (FX, FROZEN_TODAY, FROZEN_NOW, FakeSource, daily_bar, flat_b
 import quotes
 from market_data.adapters.store import StoreQuotes
 from market_data.indicators import AtrReading, LastClosed, SwingLow, SwingLows
-from market_data.model import DateRange, Instrument, Isin, PeriodBar, Quality, Volume
+from market_data.model import DateRange, Instrument, Isin, PeriodBar, Quality, Trust, Volume
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 from market_data.quote_chain import QuoteChain
@@ -83,7 +83,7 @@ def bar(day, close, source="yahoo"):
 def bar_json(day, close, source="yahoo"):
     """What bar(day, close, source) prints."""
     return {"date": day, "o": close, "h": close, "l": close, "c": close, "v": 1, "complete": True,
-            "source": source}
+            "source": source, "trusted": True}
 
 
 BARS = tuple(bar(f"2026-07-{d:02d}", float(d)) for d in (20, 21, 22, 23, 24))
@@ -109,6 +109,15 @@ class TestMain(unittest.TestCase):
                          ("PKN.WA", "PKN.PL", "symbols.json", True))
         self.assertEqual(rec["bars"], [bar_json(f"2026-07-{d}", float(d)) for d in (22, 23, 24)])
         self.assertNotIn("unavailable", rec)                # empty -> absent, as today
+
+    def test_a_bar_the_source_does_not_vouch_for_is_printed_untrusted_with_its_reason(self):
+        placeholder = daily_bar("2026-07-24", 24, 24, 24, 24, 0,
+                                trust=Trust.untrusted("placeholder"))
+        rec = run(["PKN.PL", "--bars", "2"],
+                  FakeSource(QuoteSeries(BARS[:-1] + (placeholder,), (YAHOO_PKN,))))["quotes"]["PKN.PL"]
+        self.assertEqual([(b["trusted"], b.get("untrusted_reason")) for b in rec["bars"]],
+                         [(True, None), (False, "placeholder")])
+        self.assertNotIn("untrusted_reason", rec["bars"][0])
 
     def test_with_a_store_the_header_names_it_before_yahoo(self):
         store_dir = Path(tempfile.mkdtemp())
@@ -230,10 +239,16 @@ class TestToJson(unittest.TestCase):
     def test_daily_bar_prints_its_source_and_gaps_as_null(self):
         b = daily_bar("2026-10-09", None, 108, 102, "107.50", 1500000, source="store")
         self.assertEqual(list(quotes.to_json(b)),
-                         ["date", "o", "h", "l", "c", "v", "complete", "source"])
+                         ["date", "o", "h", "l", "c", "v", "complete", "source", "trusted"])
         self.assertEqual(self.dumped(b), {"date": "2026-10-09", "o": None, "h": 108.0, "l": 102.0,
                                           "c": 107.5, "v": 1500000, "complete": True,
-                                          "source": "store"})
+                                          "source": "store", "trusted": True})
+
+    def test_untrusted_daily_bar_says_why(self):
+        b = daily_bar("2026-10-09", 107, 107, 107, 107, 0, trust=Trust.untrusted("placeholder"))
+        self.assertEqual(list(quotes.to_json(b))[-2:], ["trusted", "untrusted_reason"])
+        self.assertEqual(self.dumped(b)["trusted"], False)
+        self.assertEqual(self.dumped(b)["untrusted_reason"], "placeholder")
 
     def test_rolled_up_bars_carry_no_source(self):
         """Output contract (SKILL.md): daily bars name their source, W1/MN bars do not."""
@@ -273,20 +288,56 @@ class TestToJson(unittest.TestCase):
 
 
 class TestOutputPinnedAt040(unittest.TestCase):
-    """Without a store the consumer reads what plugin 0.4.0 printed: header and records byte for byte.
-    fixtures/cli_0_4_0_PKN.json is the 0.4.0 output (commit 2589785) for these arguments, fed by the
-    same Yahoo fixture, minus 'generated' (the wall clock)."""
+    """Without a store the consumer still finds everything plugin 0.4.0 printed, unchanged and in the
+    same order; the output may only add keys. fixtures/cli_0_4_0_PKN.json is the 0.4.0 output
+    (commit 2589785) for these arguments, fed by the same Yahoo fixture, minus 'generated' (the wall
+    clock). 'data_note' is prose for the reader and may grow. A key the output adds must be named in
+    NEW_KEYS: a new key is a contract change, so it is let in on purpose, not by accident."""
 
     ARGV = ["PKN.PL", "--atr", "--swings"]
+    NOT_COMPARED = {"generated", "data_note"}
+    NEW_KEYS = {"trusted", "untrusted_reason"}
 
-    def test_header_and_records_match_0_4_0(self):
+    def output(self):
         source = quotes.build_source(False, fetch=lambda sym, rng: (load_yahoo("PKN"), None),
                                      sleep=lambda s: None)
-        doc = run(self.ARGV, source)
-        del doc["generated"]
+        return run(self.ARGV, source)
+
+    def assertPinnedPlusNewKeys(self, pinned, got, path="$"):
+        if isinstance(pinned, dict):
+            self.assertIsInstance(got, dict, path)
+            added = set(got) - set(pinned)
+            self.assertLessEqual(added, self.NEW_KEYS, f"{path}: keys 0.4.0 did not print")
+            self.assertEqual([k for k in got if k in pinned], list(pinned), f"{path}: key order")
+            for k in pinned:
+                self.assertPinnedPlusNewKeys(pinned[k], got[k], f"{path}.{k}")
+        elif isinstance(pinned, list):
+            self.assertIsInstance(got, list, path)
+            self.assertEqual(len(got), len(pinned), f"{path}: length")
+            for i, (p, g) in enumerate(zip(pinned, got)):
+                self.assertPinnedPlusNewKeys(p, g, f"{path}[{i}]")
+        else:                                       # 156.0 and 156 are not the same output
+            self.assertEqual((type(got), got), (type(pinned), pinned), path)
+
+    def test_records_are_0_4_0_plus_only_new_keys(self):
+        doc = self.output()
         with open(os.path.join(FX, "cli_0_4_0_PKN.json"), encoding="utf-8") as f:
-            pinned = f.read()
-        self.assertEqual(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", pinned)
+            pinned = json.load(f)
+        for k in self.NOT_COMPARED:
+            doc.pop(k, None)
+            pinned.pop(k, None)
+        self.assertPinnedPlusNewKeys(pinned, doc)
+
+    def test_without_placeholders_every_daily_bar_is_trusted(self):
+        bars = self.output()["quotes"]["PKN.PL"]["bars"]
+        self.assertTrue(bars)
+        self.assertEqual({(b["trusted"], "untrusted_reason" in b) for b in bars}, {(True, False)})
+
+    def test_the_comparison_catches_a_changed_value_and_an_unannounced_key(self):
+        pinned = {"a": [{"c": 1.0}]}
+        for got in ({"a": [{"c": 1}]}, {"a": [{"c": 1.0, "surprise": 0}]}, {"a": [{"c": 2.0}]}):
+            with self.subTest(got=got), self.assertRaises(AssertionError):
+                self.assertPinnedPlusNewKeys(pinned, got)
 
 
 class TestFlagsReachTheCompositionRoot(unittest.TestCase):

@@ -17,7 +17,8 @@ Semantics every adapter keeps:
   time zone. It stays a float because session_end/stamp_complete compute on epochs.
 - Bars are DailyBar. Each carries `source` (the adapter's name) and `trust`, set by the adapter
   that served it: whether a session can be relied on is that source's knowledge, so nothing
-  downstream decides it. For now every adapter reports Trust.TRUSTED.
+  downstream decides it. An adapter does not guess a price for a session it cannot vouch for and
+  does not drop that session: it serves it marked untrusted, with the reason.
 
 Deliberately plain: an adapter's `name` is a str (an enum of known sources would break open-closed)
 and so is a failure's `reason` (http_<code> is open-ended).

@@ -414,6 +414,75 @@ class TestToBar(unittest.TestCase):
         self.assertTrue(all(b.close is not None for b in s.bars))
 
 
+PLACEHOLDER = Trust.untrusted("placeholder")
+
+
+class TestPlaceholder(unittest.TestCase):
+    """Yahoo fills a session it has no trades for with one price in all four fields and no volume.
+    The adapter does not guess that session's price and does not drop it: it marks it untrusted.
+    The rule looks at the bar alone, never at the session before it."""
+
+    ROW = {"date": "2026-07-24", "o": 155.7, "h": 156.3, "l": 153.42, "c": 156.0, "v": 1516341,
+           "complete": True}
+
+    def flat(self, p=156.0, v=0, **row):
+        return {**self.ROW, "o": p, "h": p, "l": p, "c": p, "v": v, **row}
+
+    def response(self, rows):
+        """A Yahoo chart response holding `rows` ((o, h, l, c, v) per session from 07-20 on)."""
+        day0 = (date(2026, 7, 20) - date(1970, 1, 1)).days * 86400 + 7 * 3600
+        cols = list(zip(*rows))
+        return {"meta": {"gmtoffset": 7200},
+                "timestamp": [day0 + i * 86400 for i in range(len(rows))],
+                "indicators": {"quote": [dict(zip(("open", "high", "low", "close", "volume"),
+                                                  map(list, cols)))]}}
+
+    def test_flat_bar_without_volume_is_an_untrusted_placeholder(self):
+        bar = yahoo.to_bar(self.flat())
+        self.assertEqual(bar.trust, PLACEHOLDER)
+        self.assertEqual(num(bar.close), 156.0)              # marked, not guessed or dropped
+
+    def test_missing_volume_counts_as_none_traded(self):
+        self.assertEqual(yahoo.to_bar(self.flat(v=None)).trust, PLACEHOLDER)
+
+    def test_flat_bar_with_volume_is_a_real_session(self):
+        self.assertEqual(yahoo.to_bar(self.flat(v=10)).trust, Trust.TRUSTED)
+
+    def test_a_bar_with_a_range_and_no_volume_is_trusted(self):
+        self.assertEqual(yahoo.to_bar(dict(self.ROW, v=0)).trust, Trust.TRUSTED)
+
+    def test_a_bar_with_a_missing_price_is_not_a_placeholder(self):
+        """All four prices must be there and equal; a gap is a gap, not a placeholder."""
+        self.assertEqual(yahoo.to_bar(self.flat(o=None)).trust, Trust.TRUSTED)
+
+    def test_forming_flat_bar_is_judged_too(self):
+        bar = yahoo.to_bar(self.flat(complete=False))
+        self.assertEqual((bar.trust, bar.complete), (PLACEHOLDER, False))
+
+    def test_five_in_a_row_are_all_placeholders_and_so_is_the_first(self):
+        """No look at the previous close: the first bar of the answer is judged like the rest."""
+        real = (150.0, 152.0, 149.0, 151.0, 900)
+        rows = [(151.0, 151.0, 151.0, 151.0, 0)] * 5 + [real]
+        s = YahooQuotes(fetch=lambda sym, rng: (self.response(rows), None), throttle=0,
+                        sleep=no_sleep).daily(PKN, period(ONE_MONTH), now=FROZEN_NOW)
+        self.assertEqual([b.trust for b in s.bars], [PLACEHOLDER] * 5 + [Trust.TRUSTED])
+
+    def test_a_cache_hit_is_judged_as_well(self):
+        """The cache holds Yahoo's rows as they came, with no judgement in them; a hit gets one."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        rows = [self.flat(date="2026-07-23"), dict(self.ROW)]
+        self.assertNotIn("trust", rows[0])
+        with open(tmp / "PKN.WA.json", "w") as f:
+            json.dump({"market_date": FROZEN_TODAY, "range": "1y", "gmtoffset": 7200,
+                       "session_end": None, "session_over": False, "daily": rows}, f)
+        calls = []
+        s = YahooQuotes(fetch=lambda sym, rng: calls.append(sym), cache_dir=tmp, throttle=0,
+                        sleep=no_sleep).daily(PKN, period(ONE_MONTH), now=FROZEN_NOW)
+        self.assertEqual(calls, [])                               # a hit
+        self.assertEqual([b.trust for b in s.bars], [PLACEHOLDER, Trust.TRUSTED])
+
+
 @unittest.skipUnless(os.environ.get("RUN_LIVE_SMOKE"), "set RUN_LIVE_SMOKE=1 to hit live Yahoo")
 class TestLiveSmoke(unittest.TestCase):
     def test_yahoo_response_shape_unchanged(self):

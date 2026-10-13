@@ -88,10 +88,15 @@ def _ohlcv(b):
 
 def to_json(obj):
     """The output contract's shape of a bar or a reading: keys and their order as consumers read
-    them, prices as floats, dates as ISO text. Quality and trust are not printed yet. Anything else
-    raises TypeError, as json.dump's `default` must."""
+    them, prices as floats, dates as ISO text. A daily bar says whether its source vouches for it,
+    and why not only when it does not. Quality is not printed yet. Anything else raises TypeError,
+    as json.dump's `default` must."""
     if isinstance(obj, DailyBar):
-        return {"date": obj.session.isoformat(), **_ohlcv(obj), "source": obj.source}
+        rec = {"date": obj.session.isoformat(), **_ohlcv(obj), "source": obj.source,
+               "trusted": obj.trust.trusted}
+        if not obj.trust.trusted:
+            rec["untrusted_reason"] = obj.trust.reason
+        return rec
     if isinstance(obj, PeriodBar):                  # rolled up from several sources: none named
         return {"date": obj.period_start.isoformat(), **_ohlcv(obj)}
     if isinstance(obj, LastClosed):
@@ -224,7 +229,8 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
                      "venue). Bars with complete:false are still forming; drop them for closed-candle "
                      "decisions. Today's bar flips to complete:true once that venue's regular session "
                      "has closed, so an evening run reads today's candle as a fact. W1/MN are "
-                     "aggregated from daily.",
+                     "aggregated from daily. A daily bar with trusted:false is one its source does "
+                     "not vouch for (untrusted_reason says why); it is shown, not repaired.",
         "quotes": quotes,
     }
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2, default=to_json)

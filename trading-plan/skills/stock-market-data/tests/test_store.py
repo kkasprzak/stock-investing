@@ -72,6 +72,17 @@ class TestStoreQuotes(unittest.TestCase):
         s = StoreQuotes(STORE).daily(PEO, PERIOD, now=NOW)
         self.assertEqual(s, QuoteSeries((), (Resolution("store", "PLPEKAO00016", ResolvedBy.ISIN),)))
 
+    def test_every_bar_is_trusted_even_one_shaped_like_a_vendor_placeholder(self):
+        """Only closed sessions someone imported are stored (ADR 0000): the store vouches for each.
+        A flat row with no volume is Yahoo's placeholder shape, and that rule is Yahoo's alone."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "PLPKN0000018.csv").write_text("date,open,high,low,close,volume,source\n"
+                                              "2026-10-08,107,107,107,107,0,stooq\n"
+                                              "2026-10-09,103,108,102,107.50,1500000,stooq\n")
+        s = StoreQuotes(tmp).daily(PKN, PERIOD, now=NOW)
+        self.assertEqual([b.trust for b in s.bars], [Trust.TRUSTED, Trust.TRUSTED])
+
     def test_unmapped_instrument_is_an_empty_answer(self):
         s = StoreQuotes(STORE).daily(Instrument.unmapped("XXXX.PL"), PERIOD, now=NOW)
         self.assertEqual(s, QuoteSeries((), ()))
