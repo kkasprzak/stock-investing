@@ -93,7 +93,10 @@ A daily bar in `bars[]` is `{date, o, h, l, c, v, complete, source, trusted}`, p
 it: `store` (this project's own candle store) or `yahoo`. `trusted` says whether that source vouches
 for the session: the store always does; Yahoo marks a **placeholder** (`o == h == l == c` and volume
 0 or missing, a session it filled in rather than one that traded) `trusted:false`,
-`untrusted_reason:"placeholder"`. An untrusted bar is shown as the source gave it, never repaired.
+`untrusted_reason:"placeholder"`, and a session where it sent an open, high, low or close that is
+no price (0, negative, not finite) `untrusted_reason:"unusable_price"`, with that field `null`; a
+price Yahoo did not send at all is only a `null` on a trusted bar. Other reasons may follow. An
+untrusted bar is shown as the source gave it, never repaired.
 A weekly or monthly bar is `{date, o, h, l, c, v, complete, status, excluded_sessions}`, with no
 `source`.
 
@@ -106,7 +109,10 @@ left out is too much is the consumer's call. Each carries both keys, always:
   `excluded_sessions`), or `no_value` — only on a W1/MN bar whose period has no trusted session:
   its `o/h/l/c/v` are `null` while it stays in the series with `complete` from the calendar.
 - `excluded_sessions`: ISO dates of the closed untrusted sessions left out, oldest first; `[]` when
-  `good`. A forming untrusted bar is not a closed session: it enters no period and is not named.
+  `good`. On W1/MN that includes the closed untrusted sessions of the period still in progress:
+  they ended after every reading's date. A forming untrusted bar is not a closed session: it adds
+  no values to its period and is not named. A W1/MN period holding only that bar still appears, as
+  a `no_value` candle with `o/h/l/c/v` `null`, `complete:false` and `excluded_sessions:[]`.
 
 `unavailable: [{source, reason}]` lists the sources that did not answer (`store`, `yahoo`); an
 `ok:true` record carries it only when some source did not answer.
@@ -136,9 +142,9 @@ there, else the first one's. A source that answered with nothing is not a failur
 - `swing_lows` (only with `--swings`) = `{candle_interval, sessions_each_side_with_higher_lows,
   window_first_session, window_last_session, window_sessions, detectable_through, detected[], status,
   excluded_sessions}` — the
-  confirmed swing lows of that window, the single definition every caller shares. Read from the same
-  usable candles as ATR: an untrusted session is neither a candidate nor a neighbour, so it never
-  confirms a low. No usable candle at all → `swing_lows: null`. A low counts when
+  confirmed swing lows of that window, the single definition every caller shares. Read from
+  complete, trusted candles like ATR, but a candle needs only a low here (ATR needs high, low and
+  close): an untrusted session is neither a candidate nor a neighbour, so it never confirms a low. No usable candle at all → `swing_lows: null`. A low counts when
   the N sessions before **and** after it all traded higher, so it cannot be read until N sessions
   have closed after it: `detectable_through` is that edge, N sessions behind `window_last_session`.
   Same window as ATR (`5 x n + 1`), so a stop distance in ATR multiples and the structure it is

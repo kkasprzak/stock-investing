@@ -453,6 +453,56 @@ class TestPlaceholderSessions(unittest.TestCase):
                          aggregate(mon_tue, "w", D("2026-07-22")))
 
 
+class TestClosedPlaceholderInThePeriodInProgress(unittest.TestCase):
+    """Tuesday 10-13 during the session: Monday 10-12 was a closed placeholder, Tuesday is a forming
+    one, 10-05..10-09 were real. The week in progress gives no reading, but the closed Monday it
+    left out lies after every weekly reading's own date, so each of them names it, as D1 does."""
+
+    TODAY = D("2026-10-13")
+    MONDAY = D("2026-10-12")
+
+    def setUp(self):
+        lows = iter([10, 9, 8, 9, 10, 9.5, 8.5, 7, 8, 9, 11, 10, 9, 10, 12])   # Mon..Fri, 3 weeks
+        self.real = [daily_bar(f"2026-{m:02d}-{d:02d}", lo + 0.5, lo + 2, lo, lo + 1, 100)
+                     for m, days in ((9, (21, 22, 23, 24, 25, 28, 29, 30)), (10, (1, 2, 5, 6, 7, 8, 9)))
+                     for d, lo in zip(days, lows)]
+        at = self.real[-1].close
+        self.served = [*self.real,
+                       placeholder(daily_bar("2026-10-12"), at),
+                       dataclasses.replace(placeholder(daily_bar("2026-10-13"), at), complete=False)]
+        self.weeks = aggregate(self.served, "w", self.TODAY)
+        self.clean = aggregate(self.real, "w", self.TODAY)
+
+    def test_the_week_in_progress_is_forming_and_names_its_closed_monday(self):
+        self.assertEqual(self.weeks[-1], PeriodBar(D("2026-10-12"), None, None, None, None, None,
+                                                   False, Quality((self.MONDAY,))))
+
+    def test_daily_last_closed_names_the_monday(self):
+        self.assertEqual(last_closed(self.served),
+                         dataclasses.replace(last_closed(self.real), quality=Quality((self.MONDAY,))))
+
+    def test_weekly_last_closed_names_the_monday(self):
+        lc = last_closed(self.weeks)
+        self.assertEqual(lc, dataclasses.replace(last_closed(self.clean),
+                                                 quality=Quality((self.MONDAY,))))
+        self.assertEqual((lc.session, lc.quality.status), (D("2026-10-05"), Status.UNCERTAIN))
+
+    def test_weekly_atr_names_the_monday(self):
+        a = atr_wilder(self.weeks, 2, "weekly")
+        self.assertIsNotNone(a)
+        self.assertEqual(a, dataclasses.replace(atr_wilder(self.clean, 2, "weekly"),
+                                                quality=Quality((self.MONDAY,))))
+
+    def test_weekly_swing_lows_name_the_monday(self):
+        s = swing_lows(self.weeks, 1, "weekly")
+        self.assertEqual(s, dataclasses.replace(swing_lows(self.clean, 1, "weekly"),
+                                                quality=Quality((self.MONDAY,))))
+
+    def test_a_forming_daily_placeholder_is_still_not_named(self):
+        """The fix is for period bars only: Tuesday has not ended, so no D1 reading names it."""
+        self.assertNotIn(self.TODAY, last_closed(self.served).quality.excluded)
+
+
 class TestStooqOracle(unittest.TestCase):
     """Golden: our aggregated bars must equal Stooq to the grosz on every clean period; on the two
     known ex-dividend weeks, Low/Close still match while Open/High stay at our unadjusted value.

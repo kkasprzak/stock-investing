@@ -10,8 +10,9 @@ from market_data.ports import QuoteSeries, QuoteSource, QuoteSourceUnavailableEr
 class QuoteChain:
     """A QuoteSource over `sources`, most trusted first. Every source is asked for the whole period
     (the chain knows no exchange calendar, so it cannot ask for gaps). A date a higher source already
-    answered is skipped in the lower ones; within one source bars pass unchanged, two bars sharing a
-    date included. A source that raises QuoteSourceUnavailableError is recorded in `unavailable` and
+    answered is skipped in the lower ones, even when the higher source's bar is untrusted and the
+    lower one's trusted (which cannot happen while the only higher source is the store, whose bars
+    are always trusted); within one source bars pass unchanged, two bars sharing a date included. A source that raises QuoteSourceUnavailableError is recorded in `unavailable` and
     the next one is asked; only when none answered does the chain raise. Any other exception
     propagates. An empty answer is an answer."""
 

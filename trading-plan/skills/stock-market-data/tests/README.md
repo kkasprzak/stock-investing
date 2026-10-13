@@ -31,7 +31,8 @@ test_indicators.py      market_data/indicators.py — _period, aggregate, last_c
                         every reading carries, placeholder sessions (ADR 0002), Stooq oracle
 test_quote_chain.py     market_data/quote_chain.py — QuoteChain: trust order, gap filling, sources that did not answer
 test_yahoo.py           market_data/adapters/yahoo.py — resolve, range buckets, cache, session close, backfill,
-                        to_bar (row to DailyBar, unusable numbers to gaps), the placeholder rule, live smoke
+                        to_bar (row to DailyBar, an unusable price to a gap on an untrusted bar), the
+                        placeholder rule, live smoke
 test_symbol_index.py    market_data/adapters/symbol_index.py — lookup by ISIN / broker ticker, broker symbol
 test_cli.py             scripts/quotes.py — build_source (the composition root), main() over an injected source,
                         flags reaching build, to_json, the 0.4.0 and 0.6.0 output pins, placeholder
@@ -134,6 +135,9 @@ values; the tests re-assert them on every run.
   `o == h == l == c` and volume 0 or missing is untrusted `"placeholder"`, judged alone (the first
   bar of an answer too, five in a row all of them), forming bars and cache hits included; a flat bar
   with volume, a bar with a range and no volume, and a bar with a missing price stay trusted.
+  `TestToBar`: an open, high, low or close Yahoo sent that is no price (0, negative, not finite)
+  becomes `null` and makes the bar untrusted `"unusable_price"`, which also wins over `"placeholder"`
+  on a bar flat at 0; a price Yahoo did not send, or an unusable volume, leaves the bar trusted.
   `test_store.py`: every store bar is trusted, even one shaped like a placeholder. `TestTrust`,
   `TestQuality`, `TestPeriodBar` (`test_model.py`): an empty reason is rejected; quality is sorted and
   unique, and `uncertain` as soon as it names a session; a period bar without a close is `no_value`.
@@ -145,8 +149,11 @@ values; the tests re-assert them on every run.
   whole series even when the `--bars` slice is all placeholders; a week of placeholders stays in the
   series as `no_value`, a week with two real sessions is read from those two, a placeholder Friday
   still closes the week, weekly readings skip the `no_value` week and name its sessions; a forming
-  untrusted bar enters no period. Several of these also show that the test has teeth: the same
-  series read as if trusted gives a different answer.
+  untrusted bar adds nothing to its period. Several of these also show that the test has teeth: the
+  same series read as if trusted gives a different answer.
+  `TestClosedPlaceholderInThePeriodInProgress`: with a closed placeholder Monday and a forming
+  placeholder Tuesday after a real week, weekly `last_closed`, ATR and swing lows keep their values
+  and name the Monday, as D1 `last_closed` does; the forming Tuesday is named by none.
 - **Store, file** (`test_store_file.py`) — `read` rejects every broken rule with its line (header,
   columns, number, OHLC, weekend, duplicate, order, CRLF, BOM, not UTF-8, unreadable); `write`
   round-trips byte for byte, sorts, replaces atomically; `merge` counts added / unchanged / changed

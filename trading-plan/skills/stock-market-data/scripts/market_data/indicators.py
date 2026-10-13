@@ -94,8 +94,12 @@ def _usable(bars: Sequence[Bar], *fields: str) -> list[int]:
 def _window_quality(bars: Sequence[Bar], first: int) -> Quality:
     """Quality of a reading whose window starts at bars[first]: every closed candle from there to the
     end of the series, so a gap inside the window and the sessions after the reading's own date are
-    both named. A forming candle is left out of a reading anyway, not because it is untrusted."""
-    return Quality.combine(*(_quality(b) for b in bars[first:] if b.complete))
+    both named. A forming daily candle is left out of a reading anyway, not because it is untrusted,
+    so it names nothing. A forming W1/MN candle is not a reading's value either, but its quality
+    holds only the closed sessions of the period in progress (aggregate already leaves its forming
+    day out), and those ended after the reading's date, so they are named."""
+    return Quality.combine(*(_quality(b) for b in bars[first:]
+                             if b.complete or isinstance(b, PeriodBar)))
 
 
 def calendar_days(interval, bars):

@@ -41,6 +41,9 @@ def no_sleep(_seconds):
     pass
 
 
+UNUSABLE = Trust.untrusted("unusable_price")
+
+
 class TestResolve(unittest.TestCase):
     def resolve(self, key):
         return YahooQuotes().resolve(INDEX.lookup(key))
@@ -399,6 +402,29 @@ class TestToBar(unittest.TestCase):
         self.assertEqual((bar.open, bar.high, bar.low, bar.volume), (None, None, None, None))
         self.assertIsNone(yahoo.to_bar(dict(self.ROW, v=float("inf"))).volume)
 
+    def test_a_price_yahoo_sent_but_that_is_no_price_makes_the_session_untrusted(self):
+        """The gap is not silent: Yahoo said something about the session that cannot be read."""
+        for bad in (0, 0.0, 0.00001, -1.0, float("nan"), float("inf")):
+            for k in ("o", "h", "l", "c"):
+                with self.subTest(field=k, value=bad):
+                    self.assertEqual(yahoo.to_bar(dict(self.ROW, **{k: bad})).trust, UNUSABLE)
+
+    def test_a_price_yahoo_did_not_send_is_a_gap_on_a_trusted_session(self):
+        for k in ("o", "h", "l", "c"):
+            with self.subTest(field=k):
+                bar = yahoo.to_bar(dict(self.ROW, **{k: None}))
+                self.assertEqual((getattr(bar, {"o": "open", "h": "high", "l": "low",
+                                                "c": "close"}[k]), bar.trust), (None, Trust.TRUSTED))
+
+    def test_an_unusable_volume_alone_keeps_the_session_trusted(self):
+        self.assertEqual(yahoo.to_bar(dict(self.ROW, v=-5)).trust, Trust.TRUSTED)
+
+    def test_a_flat_session_at_zero_with_no_volume_is_unusable_not_a_placeholder(self):
+        """Flat with no volume, but at a price that is no price: there is no price to have filled
+        the session with, so the unreadable number is the reason."""
+        bar = yahoo.to_bar(dict(self.ROW, o=0, h=0, l=0, c=0, v=0))
+        self.assertEqual((bar.close, bar.trust), (None, UNUSABLE))
+
     def test_a_whole_number_close_prints_as_a_float(self):
         self.assertEqual(quotes.to_json(yahoo.to_bar(dict(self.ROW, c=156)))["c"], 156.0)
 
@@ -412,6 +438,7 @@ class TestToBar(unittest.TestCase):
         self.assertTrue(s.bars)
         self.assertEqual({(b.open, b.high, b.low) for b in s.bars}, {(None, None, None)})
         self.assertTrue(all(b.close is not None for b in s.bars))
+        self.assertEqual({b.trust for b in s.bars}, {UNUSABLE})
 
 
 PLACEHOLDER = Trust.untrusted("placeholder")

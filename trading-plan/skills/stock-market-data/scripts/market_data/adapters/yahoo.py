@@ -145,13 +145,20 @@ def _price(x) -> Price | None:
 
 
 PLACEHOLDER = Trust.untrusted("placeholder")
+UNUSABLE_PRICE = Trust.untrusted("unusable_price")
 
 
 def _trust(o: Price | None, h: Price | None, l: Price | None, c: Price | None,  # noqa: E741
-           volume: Volume | None) -> Trust:
+           volume: Volume | None, unusable: bool) -> Trust:
     """Yahoo fills a session it has no trades for with one price in all four fields and no volume.
     Such a bar is marked, not repaired or dropped. The bar alone decides: no look at the session
-    before it, so the first bar of an answer and a forming one are judged the same way."""
+    before it, so the first bar of an answer and a forming one are judged the same way.
+
+    A price Yahoo sent that is no price (0, negative, not finite) marks the session too, so the gap
+    it leaves is named rather than silent; a price Yahoo did not send is a plain gap. That reason
+    comes first: a session flat at 0 has no price it could have been filled with."""
+    if unusable:
+        return UNUSABLE_PRICE
     flat = None not in (o, h, l, c) and o == h == l == c
     return PLACEHOLDER if flat and (volume is None or volume.value == 0) else Trust.TRUSTED
 
@@ -160,11 +167,13 @@ def to_bar(row: dict) -> DailyBar:
     """A row of build_daily (or of the cache, which holds the same rows, unjudged) as the port's
     DailyBar, with Yahoo's judgement of it."""
     v = row.get("v")
-    o, h, l, c = (_price(row.get(k)) for k in ("o", "h", "l", "c"))  # noqa: E741
+    sent = [row.get(k) for k in ("o", "h", "l", "c")]
+    o, h, l, c = prices = [_price(x) for x in sent]  # noqa: E741
+    unusable = any(x is not None and p is None for x, p in zip(sent, prices))
     volume = Volume(int(v)) if v is not None and math.isfinite(v) and v >= 0 else None
     return DailyBar(session=date.fromisoformat(row["date"]), open=o, high=h, low=l, close=c,
                     volume=volume, complete=row["complete"], source=SOURCE,
-                    trust=_trust(o, h, l, c, volume))
+                    trust=_trust(o, h, l, c, volume, unusable))
 
 
 class YahooQuotes:
