@@ -34,7 +34,8 @@ test_indicators.py      market_data/indicators.py — aggregate, last_closed, AT
 test_quote_chain.py     market_data/quote_chain.py — QuoteChain: trust order, gap filling, sources that did not answer
 test_yahoo.py           market_data/adapters/yahoo.py — resolve, range buckets, session close, backfill,
                         to_bar (row to DailyBar, an unusable price to a gap on an untrusted bar), the
-                        placeholder rule, live smoke
+                        placeholder rule, fetch_chart (the symbol escaped into the URL, retries and
+                        their pauses, the last attempt's reason), live smoke
 test_symbol_index.py    market_data/adapters/symbol_index.py — lookup by ISIN / broker ticker, broker symbol,
                         find (a namespace's symbol back to its ISIN), name, every map entry indexed,
                         a bad ISIN or a symbol twice in one namespace fails construction
@@ -93,9 +94,11 @@ and `import market_data...`. The module is named `support`, not
 No mocks. Whatever a test needs to replace is a seam the code already offers: a source is a fake
 class implementing the `QuoteSource` port — `support.FakeSource` (one fixed answer or one fixed
 error, recording what it was asked; used by `test_cli.py` and `test_store.py`), and `ChainFake`,
-local to `test_quote_chain.py`, for the chain's own cases. The Yahoo adapter takes its `fetch` and
-`sleep` as constructor arguments, so `test_yahoo.py` hands it fixtures and a no-op or recording
-sleep. `quotes.main(argv, source=, build=, today=)` and `build_source(store_dir=..., fetch=...,
+local to `test_quote_chain.py`, for the chain's own cases. The Yahoo adapter takes its `fetch`,
+`opener` and `sleep` as constructor arguments, so `test_yahoo.py` hands it fixtures and a no-op or
+recording sleep; `fetch_chart` itself takes the `opener` in place of `urlopen`, so its tests script
+bodies, HTTP errors and timeouts without the network and without really pausing.
+`quotes.main(argv, source=, build=, today=)` and `build_source(store_dir=..., fetch=..., opener=...,
 sleep=...)` take the same injections, so the CLI is tested without the network. The store is a
 directory on disk: the
 `fixtures/store/` directory, or a temp one; `import_quotes.main(argv, today=)` takes the date, so
@@ -116,7 +119,8 @@ values; the tests re-assert them on every run.
 ## Layers
 
 - **Unit** — `resolve` (`test_yahoo.py`), `_period`, `aggregate`, `last_closed`
-  (`test_indicators.py`), `build_daily` null-close backfill (`test_yahoo.py`), the value objects
+  (`test_indicators.py`), `build_daily` null-close backfill and `fetch_chart`'s URL, retries and
+  reasons over a scripted opener (`test_yahoo.py`), the value objects
   (`test_model.py`) and symbol lookup (`test_symbol_index.py`).
 - **Stooq oracle** (`TestStooqOracle`) — pipeline vs Stooq, to the grosz, over the hand-verified
   recent window per interval. Low/Close always match; the two ex-dividend weeks (PKN 2026-06-15,
@@ -182,8 +186,8 @@ values; the tests re-assert them on every run.
   one that cannot be created (both skipped as root). Exit 2: a missing `--store`, an unknown
   ticker, a literal `${` in `--store`, a `--store` whose parent directory does not exist (nothing
   created).
-- **CLI** (`test_cli.py`) — `build_source` fetches on every call (there is no cache), and with a
-  store asks it before Yahoo; the `ok:true` / `ok:false` records (one `ok:false` path
+- **CLI** (`test_cli.py`) — `build_source` fetches on every call (there is no cache), with a
+  store asks it before Yahoo, and hands its opener and sleep through to Yahoo's fetch; the `ok:true` / `ok:false` records (one `ok:false` path
   for a failed chain and for no bars while a source did not answer), the header naming every
   source in trust order, and `--bars` edge values that must not crash.
   `TestFlagsReachTheCompositionRoot`: `--store` reaches `build_source` through `main()`, and

@@ -2,10 +2,12 @@
 symbol suffixes and its range buckets. It keeps nothing on disk: there is no cache (ADR 0004)."""
 from __future__ import annotations
 
+import http.client
 import json
 import math
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -31,14 +33,32 @@ def range_for_days(days):
     return "max"
 
 
-def fetch_chart(yahoo, rng, tries=4):
-    """Return (result, None) or (None, reason). Mirrors screen.py fetch idiom + 429 linear backoff."""
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo}?range={rng}&interval=1d"
+# What reached no answer from Yahoo (HTTPError is caught before these), and what answered with
+# something that is not a chart response.
+_NETWORK_ERRORS = (OSError, http.client.HTTPException)
+_BAD_RESPONSES = (ValueError, KeyError, IndexError, TypeError, AttributeError)
+
+
+def fetch_chart(yahoo, rng, tries=4, *, opener=urllib.request.urlopen, sleep=time.sleep):
+    """Return (result, None) or (None, reason). `opener` (urlopen's signature) and `sleep` are
+    injectable so tests run offline and never really pause.
+
+    The symbol is escaped into the path, so no text can add to the query or break the request line.
+    A 429, a network failure and an unreadable answer are tried again after a pause (linear backoff
+    on 429), never after the last attempt; once the tries run out the reason is the last attempt's:
+    rate_limited, network_error or bad_response. Yahoo's own error code, an empty result
+    (not_found), a 404 (not_found) and any other HTTP status (http_<code>) answer at once."""
+    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/"
+           f"{urllib.parse.quote(yahoo, safe='')}?range={rng}&interval=1d")
     delay = 3
+    reason = None
     for t in range(tries):
+        if t:
+            sleep(delay * t if reason == "rate_limited" else delay)
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            d = json.load(urllib.request.urlopen(req, timeout=15))
+            with opener(req, timeout=15) as response:
+                d = json.load(response)
             if d.get("chart", {}).get("error"):
                 return None, d["chart"]["error"].get("code", "error")
             r = d["chart"]["result"]
@@ -46,12 +66,15 @@ def fetch_chart(yahoo, rng, tries=4):
                 return None, "not_found"
             return r[0], None
         except urllib.error.HTTPError as e:
-            if e.code == 429:
-                time.sleep(delay * (t + 1)); continue
-            return None, "not_found" if e.code == 404 else f"http_{e.code}"
-        except Exception:
-            time.sleep(delay); continue
-    return None, "rate_limited"
+            e.close()                                  # the error carries the response body
+            if e.code != 429:
+                return None, "not_found" if e.code == 404 else f"http_{e.code}"
+            reason = "rate_limited"
+        except _NETWORK_ERRORS:
+            reason = "network_error"
+        except _BAD_RESPONSES:
+            reason = "bad_response"
+    return None, reason
 
 
 def _date(ts, off):
@@ -166,15 +189,20 @@ def to_bar(row: dict) -> DailyBar:
 
 
 class YahooQuotes:
-    """QuoteSource over Yahoo's v8 chart endpoint. `fetch`, `sleep` and `now` are injectable so tests
-    run offline. Every call fetches live; nothing is written to disk. Every bar it serves is judged
+    """QuoteSource over Yahoo's v8 chart endpoint. `fetch`, `opener`, `sleep` and `now` are
+    injectable so tests run offline. A given `fetch(symbol, range)` replaces fetch_chart whole;
+    without one, fetch_chart runs over `opener` and `sleep`, so the same sleep takes its backoff and
+    the throttle. Every call fetches live; nothing is written to disk. Every bar it serves is judged
     by to_bar: Yahoo's placeholder sessions come out untrusted."""
 
     name = SOURCE
     description = "Yahoo Finance v8 chart (~15 min delayed)"
 
-    def __init__(self, *, fetch=fetch_chart, throttle: float = THROTTLE,
+    def __init__(self, *, fetch=None, opener=urllib.request.urlopen, throttle: float = THROTTLE,
                  sleep=time.sleep) -> None:
+        if fetch is None:
+            def fetch(symbol, rng):
+                return fetch_chart(symbol, rng, opener=opener, sleep=sleep)
         self._fetch = fetch
         self._throttle = throttle
         self._sleep = sleep

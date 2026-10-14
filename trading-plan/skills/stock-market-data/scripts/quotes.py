@@ -19,6 +19,7 @@ its sources in trust order, each an adapter (market_data/adapters/store.py, then
 from __future__ import annotations
 
 import sys, os, json, time, argparse
+import urllib.request
 from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
 
@@ -27,7 +28,7 @@ sys.path.insert(0, HERE)                        # market_data/ sits next to this
 
 from market_data.adapters.store import StoreQuotes          # noqa: E402
 from market_data.adapters.symbol_index import SymbolIndex   # noqa: E402
-from market_data.adapters.yahoo import YahooQuotes, fetch_chart   # noqa: E402
+from market_data.adapters.yahoo import YahooQuotes   # noqa: E402
 from market_data.indicators import (ATR_DEFAULT_N, SWING_SESSIONS_DEFAULT,   # noqa: E402
                                     AtrReading, LastClosed, SwingLow, SwingLows, aggregate,
                                     atr_wilder, bars_needed, calendar_days, last_closed,
@@ -44,11 +45,12 @@ MIN_PERIOD_DAYS = 9                             # the port's promise: an empty a
                                                 # (below Yahoo's smallest bucket, 1mo, so no fetch changes)
 
 
-def build_source(*, store_dir: Path | None = None, fetch=fetch_chart,
+def build_source(*, store_dir: Path | None = None, fetch=None, opener=urllib.request.urlopen,
                  sleep=time.sleep) -> QuoteSource:
-    """The composition root: which sources answer, in which order. `fetch` and `sleep` are injectable
-    so tests run offline and unthrottled. Nothing here writes to disk: there is no cache (ADR 0004)."""
-    yahoo_source = YahooQuotes(fetch=fetch, sleep=sleep)
+    """The composition root: which sources answer, in which order. `fetch`, `opener` and `sleep` are
+    injectable so tests run offline and unthrottled (see YahooQuotes). Nothing here writes to disk:
+    there is no cache (ADR 0004)."""
+    yahoo_source = YahooQuotes(fetch=fetch, opener=opener, sleep=sleep)
     # Order on this list = trust hierarchy (ADR 0000, docs/adr/0000-own-candle-store-is-the-most-
     # trusted-source-of-market-data.md): the own candle store first, Yahoo patches what it lacks.
     store = [StoreQuotes(store_dir)] if store_dir is not None else []

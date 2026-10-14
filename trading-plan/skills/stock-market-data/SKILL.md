@@ -136,7 +136,11 @@ left out is too much is the consumer's call. Each carries both keys, always:
   a `no_value` candle with `o/h/l/c/v` `null`, `complete:false` and `excluded_sessions:[]`.
 
 `unavailable: [{source, reason}]` lists the sources that did not answer (`store`, `yahoo`); an
-`ok:true` record carries it only when some source did not answer.
+`ok:true` record carries it only when some source did not answer. Yahoo's reasons: `not_found`
+(no such symbol), `rate_limited` (still throttled after its retries), `network_error` (no
+connection, a timeout), `bad_response` (an answer that is not a chart), `http_<code>` (any other
+HTTP status), or Yahoo's own error code. Throttling, a network error and a bad response are retried;
+the reason is the last attempt's.
 
 `ok:false` when no source answered, and also when no bars came back while some source did not
 answer. An `ok:false` record always carries the full `unavailable` list; `reason` is Yahoo's entry

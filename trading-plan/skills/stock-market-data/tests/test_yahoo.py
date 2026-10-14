@@ -1,14 +1,18 @@
 """market_data.adapters.yahoo — YahooQuotes: resolve, range buckets, session close, backfill.
 
 Offline: Yahoo responses are fixtures (fixtures/yahoo_*.json) or hand-built dicts, served through an
-injected fetch; the clock is an injected epoch; throttling goes to an injected sleep. Opt-in live
+injected fetch, or as bytes and HTTP errors through an injected opener in place of urlopen; the clock
+is an injected epoch; throttling and backoff go to an injected sleep. Opt-in live
 check (hits Yahoo): RUN_LIVE_SMOKE=1.
 """
 from __future__ import annotations
 
+import http.client
+import io
 import json
 import os
 import unittest
+import urllib.error
 from datetime import date, timedelta
 
 from support import FX, FROZEN_TODAY, FROZEN_NOW, GPW_CLOSE, num, price, warsaw, load_yahoo
@@ -286,6 +290,144 @@ class TestToBar(unittest.TestCase):
         self.assertEqual({(b.open, b.high, b.low) for b in s.bars}, {(None, None, None)})
         self.assertTrue(all(b.close is not None for b in s.bars))
         self.assertEqual({b.trust for b in s.bars}, {UNUSABLE})
+
+
+class Opener:
+    """Stands in for urllib.request.urlopen: answers each request with the next scripted outcome (a
+    body in bytes, or an exception to raise) and records the requests it was given."""
+
+    def __init__(self, *outcomes):
+        self.outcomes = list(outcomes)
+        self.requests = []
+
+    def __call__(self, request, timeout=None):
+        self.requests.append(request)
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return io.BytesIO(outcome)
+
+    @property
+    def urls(self):
+        return [r.full_url for r in self.requests]
+
+
+def http_error(code):
+    return urllib.error.HTTPError("https://query1.finance.yahoo.com/", code, "x", {}, None)
+
+
+def chart_body(result):
+    return json.dumps({"chart": {"result": result, "error": None}}).encode()
+
+
+TOO_MANY = http_error(429)
+TIMEOUT = TimeoutError("timed out")
+REFUSED = urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
+
+
+class TestFetchChart(unittest.TestCase):
+    """fetch_chart over an injected opener and sleep: the symbol escaped into the URL, 429 retried
+    with a pause, and a failure named by what the last attempt ran into. Nothing really sleeps."""
+
+    def setUp(self):
+        self.sleeps = []
+
+    def fetch(self, opener, symbol="PKN.WA", tries=4):
+        return yahoo.fetch_chart(symbol, "1mo", tries, opener=opener, sleep=self.sleeps.append)
+
+    def test_answer_is_the_first_result(self):
+        r, reason = self.fetch(Opener(chart_body([{"meta": {"symbol": "PKN.WA"}}])))
+        self.assertEqual((r, reason), ({"meta": {"symbol": "PKN.WA"}}, None))
+        self.assertEqual(self.sleeps, [])
+
+    def test_symbol_is_escaped_into_the_path(self):
+        for symbol, escaped in (("^GSPC", "%5EGSPC"), ("EURUSD=X", "EURUSD%3DX"),
+                                ("A?range=max", "A%3Frange%3Dmax"), ("A#B", "A%23B"),
+                                ("A/B", "A%2FB"), ("PKN.WA\r\nX: y", "PKN.WA%0D%0AX%3A%20y")):
+            with self.subTest(symbol=symbol):
+                opener = Opener(chart_body([{}]))
+                self.fetch(opener, symbol)
+                self.assertEqual(opener.urls, [
+                    "https://query1.finance.yahoo.com/v8/finance/chart/"
+                    f"{escaped}?range=1mo&interval=1d"])
+
+    def test_429_every_time_is_rate_limited_with_a_pause_between_tries_only(self):
+        opener = Opener(*[TOO_MANY] * 4)
+        self.assertEqual(self.fetch(opener), (None, "rate_limited"))
+        self.assertEqual(len(opener.requests), 4)
+        self.assertEqual(self.sleeps, [3, 6, 9])           # none after the last attempt
+
+    def test_429_then_an_answer(self):
+        r, reason = self.fetch(Opener(TOO_MANY, chart_body([{"ok": 1}])))
+        self.assertEqual((r, reason), ({"ok": 1}, None))
+        self.assertEqual(self.sleeps, [3])
+
+    def test_connection_failures_are_network_errors(self):
+        for error in (REFUSED, TIMEOUT, urllib.error.URLError(TIMEOUT),
+                      http.client.InvalidURL("control characters"),
+                      http.client.RemoteDisconnected("closed")):
+            with self.subTest(error=error):
+                self.sleeps = []
+                self.assertEqual(self.fetch(Opener(*[error] * 4)), (None, "network_error"))
+                self.assertEqual(len(self.sleeps), 3)
+
+    def test_an_unreadable_answer_is_a_bad_response(self):
+        for body in (b"<html><body>Will be right back</body></html>",
+                     json.dumps({"chart": {"error": None}}).encode(),   # no result at all
+                     json.dumps({"finance": {}}).encode(),
+                     b"\xff\xfe"):
+            with self.subTest(body=body):
+                self.sleeps = []
+                self.assertEqual(self.fetch(Opener(*[body] * 4)), (None, "bad_response"))
+                self.assertEqual(len(self.sleeps), 3)
+
+    def test_the_reason_is_the_last_attempts(self):
+        cases = (((TOO_MANY, TOO_MANY, TOO_MANY, TIMEOUT), "network_error"),
+                 ((TIMEOUT, TIMEOUT, TIMEOUT, TOO_MANY), "rate_limited"),
+                 ((TOO_MANY, REFUSED, TOO_MANY, b"<html/>"), "bad_response"))
+        for outcomes, reason in cases:
+            with self.subTest(reason=reason):
+                self.assertEqual(self.fetch(Opener(*outcomes)), (None, reason))
+
+    def test_404_is_not_found_at_once(self):
+        opener = Opener(http_error(404))
+        self.assertEqual(self.fetch(opener), (None, "not_found"))
+        self.assertEqual((len(opener.requests), self.sleeps), (1, []))
+
+    def test_other_http_errors_are_named_by_code_at_once(self):
+        opener = Opener(http_error(503))
+        self.assertEqual(self.fetch(opener), (None, "http_503"))
+        self.assertEqual((len(opener.requests), self.sleeps), (1, []))
+
+    def test_an_empty_result_is_not_found(self):
+        self.assertEqual(self.fetch(Opener(chart_body([]))), (None, "not_found"))
+
+    def test_yahoos_own_error_code_is_the_reason(self):
+        body = json.dumps({"chart": {"result": None,
+                                     "error": {"code": "Not Found", "description": "x"}}}).encode()
+        self.assertEqual(self.fetch(Opener(body)), (None, "Not Found"))
+        self.assertEqual(self.sleeps, [])
+
+
+class TestSeamsPassThrough(unittest.TestCase):
+    """The opener and sleep given to YahooQuotes reach fetch_chart: the stdlib is the default, not
+    the only choice."""
+
+    def test_yahoo_quotes_fetches_through_the_given_opener_and_sleep(self):
+        sleeps = []
+        opener = Opener(TOO_MANY, chart_body([load_yahoo("PKN")]))
+        s = YahooQuotes(opener=opener, throttle=0.5, sleep=sleeps.append).daily(
+            PKN, period(ONE_YEAR), now=FROZEN_NOW)
+        self.assertTrue(s.bars)
+        self.assertEqual(opener.urls, [
+            "https://query1.finance.yahoo.com/v8/finance/chart/PKN.WA?range=1y&interval=1d"] * 2)
+        self.assertEqual(sleeps, [3, 0.5])                 # the backoff, then the throttle
+
+    def test_a_failure_through_the_opener_reaches_the_port(self):
+        src = YahooQuotes(opener=Opener(*[TIMEOUT] * 4), sleep=no_sleep)
+        with self.assertRaises(QuoteSourceUnavailableError) as cm:
+            src.daily(PKN, period(ONE_YEAR), now=FROZEN_NOW)
+        self.assertEqual(cm.exception.failures, (SourceFailure("yahoo", "network_error"),))
 
 
 PLACEHOLDER = Trust.untrusted("placeholder")

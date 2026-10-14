@@ -65,6 +65,21 @@ class TestBuildSource(unittest.TestCase):
                           (date(2026, 7, 24), price(1), "store")])
         self.assertEqual(len(self.calls), 1)
 
+    def test_opener_and_sleep_reach_yahoo(self):
+        """Without a fake fetch, Yahoo's own fetch goes through the given opener and sleep."""
+        urls, sleeps = [], []
+
+        def opener(request, timeout=None):
+            urls.append(request.full_url)
+            return io.BytesIO(json.dumps({"chart": {"result": [load_yahoo("PKN")]}}).encode())
+
+        bars = quotes.build_source(opener=opener, sleep=sleeps.append).daily(
+            PKN, PERIOD, now=FROZEN_NOW).bars
+        self.assertTrue(bars)
+        self.assertEqual(urls, ["https://query1.finance.yahoo.com/v8/finance/chart/PKN.WA"
+                                "?range=1y&interval=1d"])
+        self.assertEqual(len(sleeps), 1)                   # the throttle after the answer
+
 
 def bar(day, close, source="yahoo"):
     return flat_bar(day, close, source)
