@@ -1,5 +1,6 @@
-"""Yahoo Finance v8 chart as a QuoteSource. The only module that knows Yahoo's response format, its
-symbol suffixes and its range buckets. It keeps nothing on disk: there is no cache (ADR 0004)."""
+"""Yahoo Finance v8 chart as a QuoteSource. The only module that knows Yahoo's response format and
+its range buckets; its symbols come from the map, never guessed (ADR 0003). It keeps nothing on
+disk: there is no cache (ADR 0004)."""
 from __future__ import annotations
 
 import http.client
@@ -207,24 +208,24 @@ class YahooQuotes:
         self._throttle = throttle
         self._sleep = sleep
 
-    def resolve(self, instrument: Instrument) -> Resolution:
-        """The map's yahoo symbol; else suffix-swap the caller's key .PL->.WA, flagged as a guess."""
+    def resolve(self, instrument: Instrument) -> Resolution | None:
+        """The map's yahoo symbol; None when the map gives none. Never guessed (ADR 0003)."""
         yahoo = instrument.symbols.get(self.name)
         if yahoo:
             return Resolution(self.name, yahoo, ResolvedBy.SYMBOLS_JSON)
-        key = instrument.key
-        if key.endswith(".PL"):                        # GPW: broker .PL -> Yahoo .WA
-            return Resolution(self.name, key[:-3] + ".WA", ResolvedBy.SUFFIX_GUESS)
-        return Resolution(self.name, key, ResolvedBy.SUFFIX_GUESS)   # foreign: already Yahoo-shaped
+        return None
 
     def daily(self, instrument: Instrument, period: DateRange, *, now: float) -> QuoteSeries:
         """Every daily bar of the smallest Yahoo range covering `period` (often more than asked).
-        Any failure to answer, Yahoo's not_found included, raises QuoteSourceUnavailableError.
+        Any failure to answer, Yahoo's not_found included, raises QuoteSourceUnavailableError; so
+        does an instrument without a yahoo symbol in the map (unmapped), before any request or pause.
         Yahoo's ranges always end today, so only `period.days` picks the range: a period ending in
         the past still gets the latest bars, not its own window. Bar completeness is decided per
         market, from the venue's tz and session close (build_daily), not from `period.end`.
         The only caller (the CLI) passes a period ending today."""
         resolution = self.resolve(instrument)
+        if resolution is None:
+            raise QuoteSourceUnavailableError((SourceFailure(self.name, "unmapped"),))
         r, reason = self._fetch(resolution.symbol, range_for_days(period.days))
         if r is None:
             raise QuoteSourceUnavailableError((SourceFailure(self.name, reason),), (resolution,))

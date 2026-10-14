@@ -21,11 +21,12 @@ from market_data.adapters import yahoo
 from market_data.adapters.symbol_index import SymbolIndex
 from market_data.adapters.yahoo import YahooQuotes, range_for_days
 from market_data.indicators import LastClosed, calendar_days, last_closed
-from market_data.model import DailyBar, DateRange, Quality, Trust, Volume
+from market_data.model import DailyBar, DateRange, Instrument, Isin, Quality, Trust, Volume
 from market_data.ports import QuoteSourceUnavailableError, Resolution, ResolvedBy, SourceFailure
 
 INDEX = SymbolIndex(quotes.SYMBOLS)
-PKN = INDEX.lookup("PKN.PL")                    # mapped: yahoo PKN.WA via symbols.json
+PKN = INDEX.lookup(Isin.parse("PLPKN0000018"))  # mapped: yahoo PKN.WA via symbols.json
+APPLE = INDEX.lookup(Isin.parse("US0378331005"))   # a valid ISIN outside the map: no symbols
 
 
 def period(days, end=FROZEN_TODAY):
@@ -46,28 +47,29 @@ UNUSABLE = Trust.untrusted("unusable_price")
 
 
 class TestResolve(unittest.TestCase):
-    def resolve(self, key):
-        return YahooQuotes().resolve(INDEX.lookup(key))
+    """The map's yahoo symbol and nothing else: no symbol is ever guessed (ADR 0003)."""
+
+    def resolve(self, isin):
+        return YahooQuotes().resolve(INDEX.lookup(Isin.parse(isin)))
 
     def test_mapped(self):
-        r = self.resolve("PKN.PL")
+        r = self.resolve("PLPKN0000018")
         self.assertEqual((r.symbol, r.by), ("PKN.WA", ResolvedBy.SYMBOLS_JSON))
 
     def test_rename_guard(self):            # xStation SPL.PL <-> Yahoo EBP.WA, bridged by ISIN
-        r = self.resolve("SPL.PL")
+        r = self.resolve("PLBZ00000044")
         self.assertEqual((r.symbol, r.by), ("EBP.WA", ResolvedBy.SYMBOLS_JSON))
 
-    def test_suffix_guess(self):            # unmapped GPW -> blind .PL->.WA, flagged
-        r = self.resolve("ZZZ.PL")
-        self.assertEqual((r.symbol, r.by), ("ZZZ.WA", ResolvedBy.SUFFIX_GUESS))
-
-    def test_foreign_passthrough(self):
-        r = self.resolve("V80A.DE")
+    def test_foreign(self):
+        r = self.resolve("IE00BMVB5R75")
         self.assertEqual((r.symbol, r.by), ("V80A.DE", ResolvedBy.SYMBOLS_JSON))
 
-    def test_unmapped_foreign_passthrough(self):   # V80A.DE above is mapped; this hits the fallback
-        r = self.resolve("ZZZ.DE")
-        self.assertEqual((r.symbol, r.by), ("ZZZ.DE", ResolvedBy.SUFFIX_GUESS))
+    def test_outside_the_map_is_not_resolved(self):
+        self.assertIsNone(self.resolve("US0378331005"))
+
+    def test_mapped_without_a_yahoo_symbol_is_not_resolved(self):
+        xtb_only = Instrument(isin=Isin.parse("PLPKN0000018"), symbols={"xtb": "PKN.PL"})
+        self.assertIsNone(YahooQuotes().resolve(xtb_only))
 
 
 class TestRangeFor(unittest.TestCase):
@@ -133,10 +135,28 @@ class TestDaily(unittest.TestCase):
     def test_not_found_is_unavailable_too(self):         # Yahoo's not_found is not an empty answer
         src = self.source(lambda sym, rng: (None, "not_found"))
         with self.assertRaises(QuoteSourceUnavailableError) as cm:
-            src.daily(INDEX.lookup("XXXX.PL"), period(ONE_YEAR), now=FROZEN_NOW)
+            src.daily(PKN, period(ONE_YEAR), now=FROZEN_NOW)
         self.assertEqual(cm.exception.failures, (SourceFailure("yahoo", "not_found"),))
         self.assertEqual(cm.exception.resolved,
-                         (Resolution("yahoo", "XXXX.WA", ResolvedBy.SUFFIX_GUESS),))
+                         (Resolution("yahoo", "PKN.WA", ResolvedBy.SYMBOLS_JSON),))
+
+    def test_no_yahoo_symbol_is_unmapped_without_a_fetch_or_a_pause(self):
+        """Not Yahoo's not_found: Yahoo was never asked, because the map gives it no symbol."""
+        fetched = []
+        src = self.source(lambda sym, rng: fetched.append(sym))
+        with self.assertRaises(QuoteSourceUnavailableError) as cm:
+            src.daily(APPLE, period(ONE_YEAR), now=FROZEN_NOW)
+        self.assertEqual(cm.exception.failures, (SourceFailure("yahoo", "unmapped"),))
+        self.assertEqual(cm.exception.resolved, ())
+        self.assertEqual((fetched, self.sleeps), ([], []))
+
+    def test_no_yahoo_symbol_is_unmapped_without_a_request_through_the_opener(self):
+        opened, slept = [], []
+        src = YahooQuotes(opener=lambda req, timeout=None: opened.append(req), sleep=slept.append)
+        with self.assertRaises(QuoteSourceUnavailableError) as cm:
+            src.daily(APPLE, period(ONE_YEAR), now=FROZEN_NOW)
+        self.assertEqual(cm.exception.failures, (SourceFailure("yahoo", "unmapped"),))
+        self.assertEqual((opened, slept), ([], []))
 
     def test_sleeps_once_after_a_live_fetch(self):
         self.source(lambda sym, rng: (load_yahoo("PKN"), None)).daily(

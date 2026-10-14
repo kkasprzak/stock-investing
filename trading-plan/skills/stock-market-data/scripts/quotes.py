@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""stock-market-data: fresh delayed daily/weekly/monthly OHLC quotes for named stock tickers.
+"""stock-market-data: fresh delayed daily/weekly/monthly OHLC quotes for instruments named by ISIN.
 
 Agent-first tool. Output is self-describing JSON (default) — read the keys, no docs needed.
-  python3 quotes.py PKN.PL ALE.PL PKO.PL          # broker tickers, daily (D1)
-  python3 quotes.py PKN.PL --interval w           # weekly (W1); m = monthly (MN)
-  python3 quotes.py PKN.PL --bars 10              # more history per symbol
-  python3 quotes.py PKN.PL --atr                 # + Wilder ATR(14) on that interval (--atr 20 to override)
-  python3 quotes.py PKN.PL --swings              # + confirmed swing lows (2 sessions each side; --swings 3 to override)
-  python3 quotes.py PKN.PL --store DIR           # this project's own candle store first, Yahoo after
-Reads recent completed candles for the given instruments, resolved via the shared symbols.json map
-(broker -> ISIN and vendor symbol): from the own candle store (--store, one CSV per ISIN) when given,
-and from Yahoo (~15 min delayed) for every session the store does not have. W1/MN are aggregated
+  python3 quotes.py PLPKN0000018 LU2237380790     # ISINs, daily (D1)
+  python3 quotes.py PLPKN0000018 --interval w     # weekly (W1); m = monthly (MN)
+  python3 quotes.py PLPKN0000018 --bars 10        # more history per instrument
+  python3 quotes.py PLPKN0000018 --atr            # + Wilder ATR(14) on that interval (--atr 20 to override)
+  python3 quotes.py PLPKN0000018 --swings         # + confirmed swing lows (2 sessions each side; --swings 3 to override)
+  python3 quotes.py PLPKN0000018 --store DIR      # this project's own candle store first, Yahoo after
+Input is ISINs only, each checked strictly (no upper-casing, no trimming); a key that is no ISIN
+gets reason invalid_isin and the rest of the run goes on. A broker's ticker is turned into an ISIN
+by symbols.py, never here. Reads recent completed candles for the given instruments: from the own
+candle store (--store, one CSV per ISIN) when given, and from Yahoo (~15 min delayed, its symbol
+from the shared symbols.json map; an ISIN without one is unmapped) for every session the store
+does not have. W1/MN are aggregated
 from the daily series (Yahoo's native weekly/monthly bars split the current period unreliably). Evaluation/monitoring only —
 execution prices come from the execution venue, not here. A price it can't read is "[NO DATA]".
 Layout: this CLI talks to one QuoteSource port (market_data/ports.py), behind which a QuoteChain asks
@@ -33,8 +36,8 @@ from market_data.indicators import (ATR_DEFAULT_N, SWING_SESSIONS_DEFAULT,   # n
                                     AtrReading, LastClosed, SwingLow, SwingLows, aggregate,
                                     atr_wilder, bars_needed, calendar_days, last_closed,
                                     swing_lows)
-from market_data.model import (AtrPeriod, DailyBar, DateRange, Interval, PeriodBar,   # noqa: E402
-                               PeriodInterval, SessionsEachSide)
+from market_data.model import (AtrPeriod, DailyBar, DateRange, Interval, Isin,   # noqa: E402
+                               PeriodBar, PeriodInterval, SessionsEachSide)
 from market_data.ports import QuoteSource, QuoteSourceUnavailableError   # noqa: E402
 from market_data.quote_chain import QuoteChain              # noqa: E402
 
@@ -149,15 +152,22 @@ def _unavailable(failures):
     return [{"source": f.source, "reason": f.reason} for f in failures]
 
 
-def _no_data(xtb, resolved, failures):
+def _no_data(resolved, failures):
     """The one ok:false record, whether no source answered or the ones that did had no bars.
     `reason` is Yahoo's when Yahoo failed (the output contract names it), else the first failure's;
     `unavailable` always lists every failure."""
     symbol, by = _yahoo_fields(resolved)
     failure = _from_yahoo(failures) or next(iter(failures), None)
-    return {"yahoo_symbol": symbol, "xtb": xtb, "resolved_by": by, "ok": False,
+    return {"yahoo_symbol": symbol, "resolved_by": by, "ok": False,
             "reason": failure.reason if failure else None, "value": "[NO DATA]",
             "unavailable": _unavailable(failures)}
+
+
+def _invalid_isin():
+    """The record for a key that is no ISIN: no source was asked, so the reason is the CLI's own
+    and nothing is listed as unavailable."""
+    return {"yahoo_symbol": None, "resolved_by": None, "ok": False, "reason": "invalid_isin",
+            "value": "[NO DATA]", "unavailable": []}
 
 
 def _store_dir(text: str) -> Path:
@@ -192,7 +202,8 @@ def _count(cls, unit):
 def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
          today: date | None = None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("tickers", nargs="+", metavar="TICKER", help="broker tickers, e.g. PKN.PL ALE.PL")
+    ap.add_argument("isins", nargs="+", metavar="ISIN",
+                    help="ISINs, e.g. PLPKN0000018 LU2237380790 (a broker ticker: symbols.py --from)")
     ap.add_argument("--interval", choices=("d", "w", "m"), default="d",
                     help="candle interval: d=daily (default), w=weekly, m=monthly")
     ap.add_argument("--bars", type=int, default=DEFAULT_BARS, metavar="N",
@@ -222,23 +233,27 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
     if source is None:
         source = build(store_dir=args.store)
     quotes = {}
-    for tk in args.tickers:
-        instrument = index.lookup(tk)
-        xtb = instrument.symbols.get("xtb")
+    for key in args.isins:                          # the output keeps the text the caller passed
+        try:
+            isin = Isin.parse(key)
+        except ValueError:
+            quotes[key] = _invalid_isin()
+            continue
+        instrument = index.lookup(isin)
         try:
             series = source.daily(instrument, period, now=time.time())
         except QuoteSourceUnavailableError as e:
-            quotes[tk] = _no_data(xtb, e.resolved, e.failures)
+            quotes[key] = _no_data(e.resolved, e.failures)
             continue
         if not series.bars and series.unavailable:  # no bars, and a source that might have had them failed
-            quotes[tk] = _no_data(xtb, series.resolved, series.unavailable)
+            quotes[key] = _no_data(series.resolved, series.unavailable)
             continue
         symbol, by = _yahoo_fields(series.resolved)
-        quotes[tk] = {"yahoo_symbol": symbol, "xtb": xtb, "resolved_by": by, "ok": True,
-                      **quote_record(list(series.bars), interval, args.bars, end, args.atr,
-                                     args.swings)}
+        quotes[key] = {"yahoo_symbol": symbol, "resolved_by": by, "ok": True,
+                       **quote_record(list(series.bars), interval, args.bars, end, args.atr,
+                                      args.swings)}
         if series.unavailable:                      # only when some source did not answer
-            quotes[tk]["unavailable"] = _unavailable(series.unavailable)
+            quotes[key]["unavailable"] = _unavailable(series.unavailable)
 
     result = {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

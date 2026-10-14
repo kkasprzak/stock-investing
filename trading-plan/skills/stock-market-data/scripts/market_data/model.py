@@ -208,17 +208,16 @@ class PeriodBar:
 
 @dataclass(frozen=True)
 class Instrument:
-    """One tradable instrument as the caller named it. Not hashable (holds a Mapping); nobody keys
-    by it."""
+    """One tradable instrument, named by its ISIN (ADR 0003). Not hashable (holds a Mapping); nobody
+    keys by it."""
 
-    key: str                    # what the caller passed: broker ticker or ISIN
-    isin: Isin | None           # None when the key is not in symbols.json
+    isin: Isin
     symbols: Mapping[str, str]  # {"xtb": "PKN.PL", "yahoo": "PKN.WA", ...}; empty when unmapped
 
     @classmethod
-    def unmapped(cls, key: str) -> Instrument:
-        """An instrument the symbol map does not know: no ISIN, no per-source symbols."""
-        return cls(key=key, isin=None, symbols={})
+    def unmapped(cls, isin: Isin) -> Instrument:
+        """An instrument the symbol map does not know: its ISIN, no per-source symbols."""
+        return cls(isin=isin, symbols={})
 
 
 @dataclass(frozen=True)

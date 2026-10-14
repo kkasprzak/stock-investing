@@ -93,11 +93,14 @@ class TestCounts(unittest.TestCase):
 
 
 class TestInstrument(unittest.TestCase):
-    def test_unmapped_has_no_isin_and_no_symbols(self):
-        i = Instrument.unmapped("ZZZ.PL")
-        self.assertEqual(i.key, "ZZZ.PL")
-        self.assertIsNone(i.isin)
+    def test_unmapped_keeps_its_isin_and_has_no_symbols(self):
+        i = Instrument.unmapped(Isin.parse("US0378331005"))
+        self.assertEqual(i.isin, Isin.parse("US0378331005"))
         self.assertEqual(dict(i.symbols), {})
+
+    def test_is_named_by_its_isin_only(self):
+        with self.assertRaises(TypeError):
+            Instrument(key="PKN.PL", isin=Isin.parse("PLPKN0000018"), symbols={})
 
 
 class TestIsin(unittest.TestCase):
