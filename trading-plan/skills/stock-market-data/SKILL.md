@@ -7,7 +7,7 @@ user-invocable: false
 # stock-market-data
 
 The market-data-acquisition layer: fresh **delayed** D1 OHLC for named instruments. Reach for this
-whenever a flow needs recent prices/candles for specific tickers. It returns facts (self-describing
+whenever a flow needs recent prices/candles for specific instruments. It returns facts (self-describing
 JSON) — the caller judges. Backend is a chain of market-data sources asked in trust order; callers
 depend on the output contract, not on which source answered.
 
@@ -242,5 +242,6 @@ Upkeep:
   (`scripts/market_data/ports.py`), placed in the chain in `quotes.py`, plus its symbol under
   `symbols` (e.g. `"eodhd": "PKN.WAR"`). A `symbols` entry alone fetches nothing.
 - **A ticker breaks after a rename** — the ISIN is stable; re-resolve that source's symbol via the
-  source's own search (for Yahoo: `v1/finance/search?q=<ISIN>`) and update `symbols`. This is why
-  blind suffix-swap is unsafe (a rename can move the provider symbol off the broker root).
+  source's own search (for Yahoo: `v1/finance/search?q=<ISIN>`) and update `symbols`. Nothing
+  derives one source's symbol from another's: a rename can move the provider symbol off the broker
+  root.
