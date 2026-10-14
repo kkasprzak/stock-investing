@@ -104,7 +104,7 @@ class TestIsin(unittest.TestCase):
     def test_accepts_every_isin_in_the_symbol_map(self):
         with open(quotes.SYMBOLS) as f:
             keys = list(json.load(f)["instruments"])
-        self.assertEqual(len(keys), 144)
+        self.assertEqual(len(keys), 145)
         for key in keys:
             with self.subTest(key=key):
                 self.assertEqual(str(Isin.parse(key)), key)
