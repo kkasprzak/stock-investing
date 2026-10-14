@@ -82,10 +82,10 @@ class FakeSource:
     def __init__(self, series=None, error=None):
         self._series = series
         self._error = error
-        self.asked = []                     # (instrument key, period)
+        self.asked = []                     # (the instrument's ISIN as text, period)
 
     def daily(self, instrument, period, *, now):
-        self.asked.append((instrument.key, period))
+        self.asked.append((str(instrument.isin), period))
         if self._error is not None:
             raise self._error
         return self._series

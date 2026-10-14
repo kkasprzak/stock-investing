@@ -21,8 +21,8 @@ from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolut
 from market_data.quote_chain import QuoteChain
 
 STORE = Path(FX) / "store"                     # holds PLPKN0000018.csv: 10-02 and 10-05..10-09
-PKN = Instrument(key="PKN.PL", isin=Isin.parse("PLPKN0000018"), symbols={"yahoo": "PKN.WA"})
-PEO = Instrument(key="PEO.PL", isin=Isin.parse("PLPEKAO00016"), symbols={"yahoo": "PEO.WA"})
+PKN = Instrument(isin=Isin.parse("PLPKN0000018"), symbols={"yahoo": "PKN.WA"})
+PEO = Instrument(isin=Isin.parse("PLPEKAO00016"), symbols={"yahoo": "PEO.WA"})
 PERIOD = DateRange(date(2026, 9, 28), date(2026, 10, 12))
 NOW = 1791000000.0                             # unused by the store; the port requires it
 PKN_RESOLVED = (Resolution("store", "PLPKN0000018", ResolvedBy.ISIN),)
@@ -83,9 +83,11 @@ class TestStoreQuotes(unittest.TestCase):
         s = StoreQuotes(tmp).daily(PKN, PERIOD, now=NOW)
         self.assertEqual([b.trust for b in s.bars], [Trust.TRUSTED, Trust.TRUSTED])
 
-    def test_unmapped_instrument_is_an_empty_answer(self):
-        s = StoreQuotes(STORE).daily(Instrument.unmapped("XXXX.PL"), PERIOD, now=NOW)
-        self.assertEqual(s, QuoteSeries((), ()))
+    def test_an_instrument_outside_the_symbol_map_is_answered_by_its_isin(self):
+        """The file is named by the ISIN: the store needs no symbol from the map."""
+        outside = Instrument.unmapped(Isin.parse("PLPKN0000018"))
+        self.assertEqual(StoreQuotes(STORE).daily(outside, PERIOD, now=NOW),
+                         StoreQuotes(STORE).daily(PKN, PERIOD, now=NOW))
 
 
 class TestStoreDidNotAnswer(unittest.TestCase):

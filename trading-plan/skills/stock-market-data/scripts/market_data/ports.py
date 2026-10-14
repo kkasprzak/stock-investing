@@ -2,8 +2,9 @@
 
 Semantics every adapter keeps:
 
-- Each adapter translates the Instrument into its own symbol (instrument.symbols.get(self.name),
-  with its own fallback) and reports how it did so in QuoteSeries.resolved.
+- Each adapter translates the Instrument into its own symbol (instrument.symbols.get(self.name), or
+  the ISIN itself where that names the data) and reports how it did so in QuoteSeries.resolved. It
+  never guesses one: an adapter that needs a symbol the map does not give it did not answer.
 - The answer covers **at least** the requested period; it may carry more (a vendor returning a whole
   range bucket). Callers trim: the indicators read a fixed window anyway, the CLI cuts to --bars.
 - **An empty tuple of bars means the source answered and has nothing for this instrument in this
@@ -39,7 +40,6 @@ class ResolvedBy(str, Enum):
     way."""
 
     SYMBOLS_JSON = "symbols.json"
-    SUFFIX_GUESS = "suffix_guess"
     ISIN = "isin"               # the ISIN itself is the key (the own store: <ISIN>.csv)
 
 
@@ -53,7 +53,7 @@ class Resolution:
 @dataclass(frozen=True)
 class SourceFailure:
     source: str
-    reason: str                 # "rate_limited" | "not_found" | "http_503" | ... (open)
+    reason: str                 # "rate_limited" | "not_found" | "unmapped" | "http_503" | ... (open)
 
 
 @dataclass(frozen=True)

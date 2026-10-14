@@ -1,16 +1,17 @@
-"""Yahoo Finance v8 chart as a QuoteSource. The only module that knows Yahoo's response format, its
-symbol suffixes, its range buckets and the on-disk cache of its daily series."""
+"""Yahoo Finance v8 chart as a QuoteSource. The only module that knows Yahoo's response format and
+its range buckets; its symbols come from the map, never guessed (ADR 0003). It keeps nothing on
+disk: there is no cache (ADR 0004)."""
 from __future__ import annotations
 
+import http.client
 import json
 import math
-import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from pathlib import Path
 
 from market_data.model import DailyBar, DateRange, Instrument, Price, Trust, Volume
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
@@ -33,22 +34,32 @@ def range_for_days(days):
     return "max"
 
 
-def range_days(label):
-    """Calendar-day span of a Yahoo range label (unknown / 'max' -> effectively unbounded)."""
-    for lbl, span in _RANGE_BUCKETS:
-        if lbl == label:
-            return span
-    return 10 ** 9
+# What reached no answer from Yahoo (HTTPError is caught before these), and what answered with
+# something that is not a chart response.
+_NETWORK_ERRORS = (OSError, http.client.HTTPException)
+_BAD_RESPONSES = (ValueError, KeyError, IndexError, TypeError, AttributeError)
 
 
-def fetch_chart(yahoo, rng, tries=4):
-    """Return (result, None) or (None, reason). Mirrors screen.py fetch idiom + 429 linear backoff."""
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo}?range={rng}&interval=1d"
+def fetch_chart(yahoo, rng, tries=4, *, opener=urllib.request.urlopen, sleep=time.sleep):
+    """Return (result, None) or (None, reason). `opener` (urlopen's signature) and `sleep` are
+    injectable so tests run offline and never really pause.
+
+    The symbol is escaped into the path, so no text can add to the query or break the request line.
+    A 429, a network failure and an unreadable answer are tried again after a pause (linear backoff
+    on 429), never after the last attempt; once the tries run out the reason is the last attempt's:
+    rate_limited, network_error or bad_response. Yahoo's own error code, an empty result
+    (not_found), a 404 (not_found) and any other HTTP status (http_<code>) answer at once."""
+    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/"
+           f"{urllib.parse.quote(yahoo, safe='')}?range={rng}&interval=1d")
     delay = 3
+    reason = None
     for t in range(tries):
+        if t:
+            sleep(delay * t if reason == "rate_limited" else delay)
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            d = json.load(urllib.request.urlopen(req, timeout=15))
+            with opener(req, timeout=15) as response:
+                d = json.load(response)
             if d.get("chart", {}).get("error"):
                 return None, d["chart"]["error"].get("code", "error")
             r = d["chart"]["result"]
@@ -56,12 +67,15 @@ def fetch_chart(yahoo, rng, tries=4):
                 return None, "not_found"
             return r[0], None
         except urllib.error.HTTPError as e:
-            if e.code == 429:
-                time.sleep(delay * (t + 1)); continue
-            return None, "not_found" if e.code == 404 else f"http_{e.code}"
-        except Exception:
-            time.sleep(delay); continue
-    return None, "rate_limited"
+            e.close()                                  # the error carries the response body
+            if e.code != 429:
+                return None, "not_found" if e.code == 404 else f"http_{e.code}"
+            reason = "rate_limited"
+        except _NETWORK_ERRORS:
+            reason = "network_error"
+        except _BAD_RESPONSES:
+            reason = "bad_response"
+    return None, reason
 
 
 def _date(ts, off):
@@ -164,8 +178,7 @@ def _trust(o: Price | None, h: Price | None, l: Price | None, c: Price | None,  
 
 
 def to_bar(row: dict) -> DailyBar:
-    """A row of build_daily (or of the cache, which holds the same rows, unjudged) as the port's
-    DailyBar, with Yahoo's judgement of it."""
+    """A row of build_daily as the port's DailyBar, with Yahoo's judgement of it."""
     v = row.get("v")
     sent = [row.get(k) for k in ("o", "h", "l", "c")]
     o, h, l, c = prices = [_price(x) for x in sent]  # noqa: E741
@@ -177,85 +190,44 @@ def to_bar(row: dict) -> DailyBar:
 
 
 class YahooQuotes:
-    """QuoteSource over Yahoo's v8 chart endpoint. `fetch`, `sleep` and `now` are injectable so tests
-    run offline; cache_dir=None (the default) never touches the disk — the fail-safe: a forgotten
-    --cache means slower, never stale. Every bar it serves, live or from the cache, is judged by
-    to_bar: Yahoo's placeholder sessions come out untrusted."""
+    """QuoteSource over Yahoo's v8 chart endpoint. `fetch`, `opener`, `sleep` and `now` are
+    injectable so tests run offline. A given `fetch(symbol, range)` replaces fetch_chart whole;
+    without one, fetch_chart runs over `opener` and `sleep`, so the same sleep takes its backoff and
+    the throttle. Every call fetches live; nothing is written to disk. Every bar it serves is judged
+    by to_bar: Yahoo's placeholder sessions come out untrusted."""
 
     name = SOURCE
     description = "Yahoo Finance v8 chart (~15 min delayed)"
 
-    def __init__(self, *, fetch=fetch_chart, cache_dir: Path | None = None,
-                 throttle: float = THROTTLE, sleep=time.sleep) -> None:
+    def __init__(self, *, fetch=None, opener=urllib.request.urlopen, throttle: float = THROTTLE,
+                 sleep=time.sleep) -> None:
+        if fetch is None:
+            def fetch(symbol, rng):
+                return fetch_chart(symbol, rng, opener=opener, sleep=sleep)
         self._fetch = fetch
-        self._cache_dir = cache_dir
         self._throttle = throttle
         self._sleep = sleep
 
-    def resolve(self, instrument: Instrument) -> Resolution:
-        """The map's yahoo symbol; else suffix-swap the caller's key .PL->.WA, flagged as a guess."""
+    def resolve(self, instrument: Instrument) -> Resolution | None:
+        """The map's yahoo symbol; None when the map gives none. Never guessed (ADR 0003)."""
         yahoo = instrument.symbols.get(self.name)
         if yahoo:
             return Resolution(self.name, yahoo, ResolvedBy.SYMBOLS_JSON)
-        key = instrument.key
-        if key.endswith(".PL"):                        # GPW: broker .PL -> Yahoo .WA
-            return Resolution(self.name, key[:-3] + ".WA", ResolvedBy.SUFFIX_GUESS)
-        return Resolution(self.name, key, ResolvedBy.SUFFIX_GUESS)   # foreign: already Yahoo-shaped
+        return None
 
     def daily(self, instrument: Instrument, period: DateRange, *, now: float) -> QuoteSeries:
         """Every daily bar of the smallest Yahoo range covering `period` (often more than asked).
-        Any failure to answer, Yahoo's not_found included, raises QuoteSourceUnavailableError.
+        Any failure to answer, Yahoo's not_found included, raises QuoteSourceUnavailableError; so
+        does an instrument without a yahoo symbol in the map (unmapped), before any request or pause.
         Yahoo's ranges always end today, so only `period.days` picks the range: a period ending in
-        the past still gets the latest bars, not its own window. `period.end` is the cache key's day.
+        the past still gets the latest bars, not its own window. Bar completeness is decided per
+        market, from the venue's tz and session close (build_daily), not from `period.end`.
         The only caller (the CLI) passes a period ending today."""
         resolution = self.resolve(instrument)
-        bars, how = self._daily(resolution.symbol, range_for_days(period.days),
-                                period.end.isoformat(), now)
-        if bars is None:
-            raise QuoteSourceUnavailableError((SourceFailure(self.name, how),), (resolution,))
-        if how == "live":
-            self._sleep(self._throttle)                # throttle real fetches only
-        return QuoteSeries(tuple(to_bar(b) for b in bars), (resolution,))
-
-    def _daily(self, yahoo, rng, today, now):
-        """Daily bars for `yahoo` over range `rng`. Returns (bars, "live"|"cache") on success, or
-        (None, reason) if the fetch failed. `today` is the cache key's day (the caller's date) — bar
-        completeness is decided per market, from the venue's tz and session close, not from this.
-        Without a cache_dir it always fetches live. With one, a stored series is reused iff it was
-        saved the same day, on the same side of that venue's session close, AND its range covers
-        `rng`; otherwise refetch and rewrite. Closed candles are immutable, so there's no TTL — but
-        the day's *forming* bar is not a closed candle, so the entry also carries the session state it
-        was written in: crossing the close invalidates it, or a mid-session snapshot would later be
-        served as the day's closed candle. `complete` is never trusted from disk; a hit re-stamps it
-        against the current clock."""
-        use_cache = self._cache_dir is not None
-        path = (self._cache_dir / (yahoo.replace(os.sep, "_") + ".json")) if use_cache else None
-        if use_cache and path.exists():
-            try:
-                with open(path) as f:
-                    c = json.load(f)
-                off, end = c.get("gmtoffset", 0), c.get("session_end")
-                closed_now = (end or float("inf")) <= now
-                if (c.get("market_date") == today and c.get("session_over") == closed_now
-                        and range_days(c.get("range", "1mo")) >= range_days(rng)):
-                    # Same market day AND same side of the close: the session can't have moved on, so
-                    # the stored series is still the series. Crossing the close makes it stale — the
-                    # forming bar's OHLC keeps changing until then, and serving it as closed would
-                    # report a mid-session snapshot as the day's candle.
-                    return stamp_complete(c["daily"], market_today(off, now), closed_now), "cache"
-            except Exception:
-                pass                                    # unreadable cache -> fall through to live
-        r, reason = self._fetch(yahoo, rng)
+        if resolution is None:
+            raise QuoteSourceUnavailableError((SourceFailure(self.name, "unmapped"),))
+        r, reason = self._fetch(resolution.symbol, range_for_days(period.days))
         if r is None:
-            return None, reason
-        daily = build_daily(r, now=now)
-        if use_cache:
-            self._cache_dir.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_name(path.name + ".tmp")
-            with open(tmp, "w") as f:
-                end = session_end(r["meta"])
-                json.dump({"market_date": today, "range": rng, "gmtoffset": r["meta"].get("gmtoffset", 0),
-                           "session_end": end, "session_over": (end or float("inf")) <= now,
-                           "daily": daily}, f)
-            os.replace(tmp, path)                       # atomic write
-        return daily, "live"
+            raise QuoteSourceUnavailableError((SourceFailure(self.name, reason),), (resolution,))
+        self._sleep(self._throttle)                    # pause after each answered fetch
+        return QuoteSeries(tuple(to_bar(b) for b in build_daily(r, now=now)), (resolution,))

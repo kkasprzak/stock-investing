@@ -65,9 +65,9 @@ def to_symbol(index: SymbolIndex, namespace: str, text: str) -> dict:
         isin = Isin.parse(text)
     except ValueError:
         return {"found": False, "reason": "invalid_isin"}
-    instrument = index.lookup(str(isin))
-    if instrument.isin is None:
+    if isin not in index:
         return {"found": False}
+    instrument = index.lookup(isin)
     return {"found": True, namespace: instrument.symbols.get(namespace), "name": index.name(isin)}
 
 

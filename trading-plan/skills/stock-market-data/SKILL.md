@@ -1,44 +1,42 @@
 ---
 name: stock-market-data
-description: Fetch fresh delayed daily / weekly / monthly (D1 / W1 / MN) OHLC candles, last closing prices, and Wilder ATR (average true range) for named stock-market instruments (GPW / XETRA / US), keyed by broker ticker via a shared ISIN-backed symbol map. Use whenever a task needs current or recent market prices, closes, or candles for specific tickers — a morning runaway check, a daily-close D1 evaluation, a weekly D1/W1/MN portfolio or watchlist review, or any ad-hoc "what did X close at" lookup. Also the one place ATR and confirmed swing lows are computed: reach for it for an instrument's ATR, its normal daily range, how volatile it is, a stop distance expressed in ATR multiples, or the swing lows a trailing stop is anchored to — never derive either from candles yourself, or two callers will disagree on the same number. The market-data-acquisition layer; returns facts, not decisions. Also translates a broker's ticker to an ISIN and back — reach for it for "which ISIN is PKN.PL" or "what is this ISIN's ticker at the broker", never translate by hand.
+description: Fetch fresh delayed daily / weekly / monthly (D1 / W1 / MN) OHLC candles, last closing prices, and Wilder ATR (average true range) for named stock-market instruments (GPW / XETRA / US), keyed by ISIN (a broker ticker is translated to its ISIN by the same skill). Use whenever a task needs current or recent market prices, closes, or candles for specific tickers — a morning runaway check, a daily-close D1 evaluation, a weekly D1/W1/MN portfolio or watchlist review, or any ad-hoc "what did X close at" lookup. Also the one place ATR and confirmed swing lows are computed: reach for it for an instrument's ATR, its normal daily range, how volatile it is, a stop distance expressed in ATR multiples, or the swing lows a trailing stop is anchored to — never derive either from candles yourself, or two callers will disagree on the same number. The market-data-acquisition layer; returns facts, not decisions. Also translates a broker's ticker to an ISIN and back — reach for it for "which ISIN is PKN.PL" or "what is this ISIN's ticker at the broker", never translate by hand.
 user-invocable: false
 ---
 
 # stock-market-data
 
 The market-data-acquisition layer: fresh **delayed** D1 OHLC for named instruments. Reach for this
-whenever a flow needs recent prices/candles for specific tickers. It returns facts (self-describing
+whenever a flow needs recent prices/candles for specific instruments. It returns facts (self-describing
 JSON) — the caller judges. Backend is a chain of market-data sources asked in trust order; callers
 depend on the output contract, not on which source answered.
 
 ## Run
 
 ```
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL ALE.PL PKO.PL ETFBM40TR.PL   # broker tickers, daily
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --interval w                 # weekly (W1); m = monthly
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --bars 10                    # more history per symbol
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --cache                      # reuse today's closed candles (skip the fetch)
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --atr                        # + Wilder ATR(14) on that interval (--atr 20 to override)
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --swings                     # + confirmed swing lows (2 sessions each side; --swings 3 to override)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PLPKN0000018 LU2237380790 PLPKO0000016   # ISINs, daily
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PLPKN0000018 --interval w     # weekly (W1); m = monthly
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PLPKN0000018 --bars 10        # more history per instrument
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PLPKN0000018 --atr            # + Wilder ATR(14) on that interval (--atr 20 to override)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PLPKN0000018 --swings         # + confirmed swing lows (2 sessions each side; --swings 3 to override)
 ```
 
 Always pass `--store` exactly as above: it points at this project's own candle store (next section).
 A value given to `--atr` or `--swings` must be a whole number of at least 1; anything else exits 2
 before anything is fetched.
 
-Input is **broker tickers** (`.PL` / `.DE` / `.US`) — the same symbols the state files use — or an
-**ISIN** (resolved via the same map; handy for index-membership callers). You never pass
-provider-specific symbols. `--interval` picks the candle: `d` daily (default), `w` weekly, `m` monthly
+Input is **ISIN only**. A broker ticker from a state file is turned into its ISIN first with
+`symbols.py --from xtb` (next section); you never pass a broker's or a provider's symbol. Each key
+is checked as given (lower case or surrounding spaces are invalid, not corrected); one that is no
+ISIN gets `ok:false`, `reason:"invalid_isin"` and the rest of the run goes on. A valid ISIN outside
+the map is still answered by the store; Yahoo, which needs the map's symbol, reports `unmapped`.
+`--interval` picks the candle: `d` daily (default), `w` weekly, `m` monthly
 — W1/MN are aggregated from the daily series (open=period start, high/low=extremes, close=period end,
 each over the period's trusted sessions), so they carry the same OHLCV and `complete`/`last_closed`
 semantics as daily, plus a `status` instead of a `source` (Output contract).
 
-`--cache` reuses the same market day's closed candles from a local cache instead of fetching; reach
-for it when a run re-reads closed candles, and omit it when the moment needs live data — your call
-from the context, not a fixed rule. Default is always-live. An entry is scoped to the session state it
-was written in: **crossing that venue's close invalidates it**, so a series cached mid-session is
-never served afterwards as the day's closed candle. Within an open session a cached forming bar can
-still be stale by construction — that bar is `complete:false`, so never decide on it.
+There is no cache: every run asks its sources afresh, and what is worth keeping lives in the own
+candle store.
 
 ## Instrument names (`scripts/symbols.py`)
 
@@ -70,9 +68,7 @@ offered: it belongs to that vendor's adapter.
 ## Own candle store (required per project)
 
 The store is this project's own record of closed daily candles, one CSV file per ISIN, filled only
-by import and asked before Yahoo, which only fills what the store lacks
-([ADR 0000](https://github.com/kkasprzak/stock-investing/blob/main/docs/adr/0000-own-candle-store-is-the-most-trusted-source-of-market-data.md),
-[ADR 0001](https://github.com/kkasprzak/stock-investing/blob/main/docs/adr/0001-candle-store-is-one-csv-file-per-isin-versioned-in-the-consumers-repository.md)).
+by import and asked before Yahoo, which only fills what the store lacks.
 
 - **Every project that uses this skill has its own store**, under `data/market-data/` in that
   project's repository. There is no global store. The `Run` lines point at it.
@@ -80,10 +76,11 @@ by import and asked before Yahoo, which only fills what the store lacks
   store yet: do the first import (below). Until then the bars come from Yahoo alone. `quotes.py`
   exiting 2 with "parent directory ... does not exist" means `--store` did not point into the
   project (an empty `${CLAUDE_PROJECT_DIR}` gives `/data/market-data`): fix the path, do not import.
-- **Feeding it** — one export per instrument, keyed the same way as `quotes.py`:
+- **Feeding it** — one export per instrument, named by its ISIN like `quotes.py` (it need not be in
+  the map):
 
   ```
-  python3 ${CLAUDE_SKILL_DIR}/scripts/import_quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data stooq <export.csv> --for PEO.PL
+  python3 ${CLAUDE_SKILL_DIR}/scripts/import_quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data stooq <export.csv> --for PLPEKAO00016
   ```
 
   The export is Stooq's **daily** history with "pomijaj splity + dywidendy" (skip splits and
@@ -93,7 +90,7 @@ by import and asked before Yahoo, which only fills what the store lacks
   1e-5 of each value, which the importer takes off; a value further off rejects the whole file
   (Stooq's history before ~2022 has more noise: export a shorter range). A row dated after today
   rejects the whole file.
-- The importer prints a JSON report: `{isin, key, file, added, unchanged, changed, changed_dates[],
+- The importer prints a JSON report: `{isin, file, added, unchanged, changed, changed_dates[],
   imported: {first, last}}`. `changed` > 0 means sessions already in the store now
   read differently: check `changed_dates` and the `git diff` before keeping them. When `added` and
   `changed` are both 0 the importer writes nothing, so importing the same export again leaves the
@@ -102,7 +99,7 @@ by import and asked before Yahoo, which only fills what the store lacks
   export was rejected (`line N: why` on stderr), is missing, or the store file is unreadable or
   malformed, or the store cannot be written (`--store` is a file, no write permission); the store
   file was not touched. Exit 2: bad arguments (including a missing `--store`, one still holding a
-  literal `${`, or one whose parent directory does not exist), or a ticker with no ISIN in the map;
+  literal `${`, or one whose parent directory does not exist), or a `--for` that is no ISIN;
   nothing is created.
 - **Committing the store is the user's step**; the importer never runs git. The project's
   `.gitattributes` should carry `data/market-data/*.csv text eol=lf`.
@@ -114,7 +111,7 @@ by import and asked before Yahoo, which only fills what the store lacks
 
 Self-describing JSON to stdout: a header `source` describing the chain that was asked — each
 source's description, most trusted first, joined by ` > ` — and `quotes[<key you passed>]` with
-`yahoo_symbol`, `xtb`, `resolved_by`, and either `ok:true` + `last_closed {date, c, status,
+`yahoo_symbol`, `resolved_by`, and either `ok:true` + `last_closed {date, c, status,
 excluded_sessions}` + `bars[]`, or `ok:false` + `reason` + `unavailable` + `value:"[NO DATA]"`.
 
 A daily bar in `bars[]` is `{date, o, h, l, c, v, complete, source, trusted}`, plus
@@ -129,8 +126,7 @@ untrusted bar is shown as the source gave it, never repaired.
 A weekly or monthly bar is `{date, o, h, l, c, v, complete, status, excluded_sessions}`, with no
 `source`.
 
-**Derived values** — W1/MN bars, `last_closed`, `atr`, `swing_lows` — follow one rule
-([ADR 0002](https://github.com/kkasprzak/stock-investing/blob/main/docs/adr/0002-derived-values-are-computed-only-from-trusted-sessions-and-carry-a-status.md)):
+**Derived values** — W1/MN bars, `last_closed`, `atr`, `swing_lows` — follow one rule:
 a value is computed from trusted sessions only and names the ones it had to leave out; how much
 left out is too much is the consumer's call. Each carries both keys, always:
 
@@ -144,16 +140,19 @@ left out is too much is the consumer's call. Each carries both keys, always:
   a `no_value` candle with `o/h/l/c/v` `null`, `complete:false` and `excluded_sessions:[]`.
 
 `unavailable: [{source, reason}]` lists the sources that did not answer (`store`, `yahoo`); an
-`ok:true` record carries it only when some source did not answer.
+`ok:true` record carries it only when some source did not answer. Yahoo's reasons: `unmapped` (the
+map gives this ISIN no Yahoo symbol, so Yahoo was not asked), `not_found` (no such symbol),
+`rate_limited` (still throttled after its retries), `network_error` (no
+connection, a timeout), `bad_response` (an answer that is not a chart), `http_<code>` (any other
+HTTP status), or Yahoo's own error code. Throttling, a network error and a bad response are retried;
+the reason is the last attempt's.
 
 `ok:false` when no source answered, and also when no bars came back while some source did not
 answer. An `ok:false` record always carries the full `unavailable` list; `reason` is Yahoo's entry
-there, else the first one's. A source that answered with nothing is not a failure: no bars and no
-`unavailable` stays `ok:true`.
+there, else the first one's. The exception is `reason:"invalid_isin"`: it comes from the key, not
+from a source, so no source was asked and `unavailable` is `[]`. A source that answered with
+nothing is not a failure: no bars and no `unavailable` stays `ok:true`.
 
-- `xtb` = the **execution-venue ticker** for this instrument, or `null` when the map has none.
-  Reach for it when you keyed by ISIN and need the symbol a state file names. Never guessed: `null`
-  means the broker does not list it, so confirm there rather than inferring from the GPW root.
 - `last_closed` = the most recent **completed**, trusted candle of the requested interval that has a
   close — the number to reason on. Read over the whole fetched series, not the `--bars` slice, so a
   short slice of placeholders still finds the last real session. Its `excluded_sessions` names the
@@ -185,7 +184,7 @@ there, else the first one's. A source that answered with nothing is not a failur
   anchor to is the caller's rule, not this layer's. No pivot in the window → `detected: []`.
 - Bars with `source: "yahoo"` are **delayed (~15 min)** — recent, not real-time. Bars with
   `source: "store"` are closed sessions as of the last import.
-- A price it can't read is `[NO DATA]`, never inferred. One bad ticker never fails the others.
+- A price it can't read is `[NO DATA]`, never inferred. One bad key never fails the others.
 
 ## Gotchas
 
@@ -221,9 +220,6 @@ there, else the first one's. A source that answered with nothing is not a failur
   the sessions around it, so `swing_lows` can report structure that is a dividend, not a defended
   level — and it looks identical to a real one. Same division of labour as ATR: this layer has no
   event calendar, so the caller holding ex-dates decides whether a low near one still counts.
-- **`resolved_by:"suffix_guess"` is unverified.** The ticker wasn't in the map and was resolved by a
-  blind `.PL→.WA` swap. After a rename this can point at the wrong or a non-existent symbol (the
-  provider ticker can move off the broker root) → wrong data or `[NO DATA]`. Add it to the map.
 - **Prices are unadjusted (actual traded).** Around an ex-dividend, pre-ex-date bars will **not**
   match dividend-back-adjusted series — that is intended, don't try to reconcile it. A total-return
   (adjusted) series is available from the provider if ever needed.
@@ -235,7 +231,7 @@ there, else the first one's. A source that answered with nothing is not a failur
 
 The single shared symbol map for every quote script, self-contained. Keyed by **ISIN** (durable
 across renames); each entry's `symbols` maps a source name (`xtb`, `yahoo`, …) to that source's
-ticker. Runtime resolves an input `xtb` ticker → entry → `symbols.yahoo`. `symbols.py` reads the
+ticker. `quotes.py` is asked by ISIN and takes `symbols.yahoo` from that entry. `symbols.py` reads the
 same map; a symbol given to two ISINs within one namespace is a map error, and every script that
 reads the map refuses to start on it.
 
@@ -246,5 +242,6 @@ Upkeep:
   (`scripts/market_data/ports.py`), placed in the chain in `quotes.py`, plus its symbol under
   `symbols` (e.g. `"eodhd": "PKN.WAR"`). A `symbols` entry alone fetches nothing.
 - **A ticker breaks after a rename** — the ISIN is stable; re-resolve that source's symbol via the
-  source's own search (for Yahoo: `v1/finance/search?q=<ISIN>`) and update `symbols`. This is why
-  blind suffix-swap is unsafe (a rename can move the provider symbol off the broker root).
+  source's own search (for Yahoo: `v1/finance/search?q=<ISIN>`) and update `symbols`. Nothing
+  derives one source's symbol from another's: a rename can move the provider symbol off the broker
+  root.

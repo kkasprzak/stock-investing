@@ -24,8 +24,6 @@ class StoreQuotes:
         unused: only closed sessions are ever stored."""
         if not self._dir.is_dir():          # the project has no store yet: say so on every record
             raise QuoteSourceUnavailableError((SourceFailure(self.name, "no_store"),))
-        if instrument.isin is None:
-            return QuoteSeries((), ())
         resolution = Resolution(self.name, str(instrument.isin), ResolvedBy.ISIN)
         path = self._dir / f"{instrument.isin}.csv"
         if not path.exists():               # exists, not is_file: a directory there is malformed

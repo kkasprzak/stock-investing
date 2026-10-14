@@ -1,6 +1,6 @@
 """quotes.py — the composition root (build_source) and the CLI (main) over an injected source.
 
-Offline, no mocks: build_source gets a temp cache directory and a fake fetch; main gets a fake
+Offline, no mocks: build_source gets a fake fetch and sleep; main gets a fake
 QuoteSource that records what it was asked and answers with fixed bars or a fixed failure.
 """
 from __future__ import annotations
@@ -26,14 +26,16 @@ from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolut
                                SourceFailure)
 from market_data.quote_chain import QuoteChain
 
-PKN = Instrument(key="PKN.PL", isin=None, symbols={"yahoo": "PKN.WA"})
-PKN_ISIN = Instrument(key="PKN.PL", isin=Isin.parse("PLPKN0000018"), symbols={"yahoo": "PKN.WA"})
+PKN = Instrument(isin=Isin.parse("PLPKN0000018"), symbols={"yahoo": "PKN.WA"})
+PKN_ISIN = "PLPKN0000018"
+ALE_ISIN = "LU2237380790"
+APPLE_ISIN = "US0378331005"                        # a valid ISIN outside the symbol map
 PERIOD = DateRange(date.fromisoformat(FROZEN_TODAY) - timedelta(days=300),
                    date.fromisoformat(FROZEN_TODAY))
 
 
 class TestBuildSource(unittest.TestCase):
-    """The fail-safe: without --cache nothing touches the disk and every call goes live."""
+    """There is no cache (ADR 0004): every call goes live."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -46,21 +48,11 @@ class TestBuildSource(unittest.TestCase):
         self.calls.append((sym, rng))
         return load_yahoo("PKN"), None
 
-    def ask_twice(self, cache):
-        source = quotes.build_source(cache, cache_dir=self.tmp, fetch=self.fetch,
-                                     sleep=lambda s: None)
+    def test_asking_twice_fetches_twice(self):
+        source = quotes.build_source(fetch=self.fetch, sleep=lambda s: None)
         for _ in range(2):
             source.daily(PKN, PERIOD, now=FROZEN_NOW)
-
-    def test_without_cache_writes_nothing_and_always_fetches(self):
-        self.ask_twice(cache=False)
-        self.assertEqual(os.listdir(self.tmp), [])
         self.assertEqual(len(self.calls), 2)
-
-    def test_with_cache_writes_one_file_and_reuses_it(self):
-        self.ask_twice(cache=True)
-        self.assertEqual(os.listdir(self.tmp), ["PKN.WA.json"])
-        self.assertEqual(len(self.calls), 1)
 
     def test_with_a_store_the_store_is_asked_before_yahoo(self):
         """Order shows in behaviour: on a date both have, the store's bar is the one that comes."""
@@ -68,13 +60,27 @@ class TestBuildSource(unittest.TestCase):
         store_dir.mkdir()
         (store_dir / "PLPKN0000018.csv").write_text(
             "date,open,high,low,close,volume,source\n2026-07-24,1,1,1,1,7,stooq\n")
-        source = quotes.build_source(False, store_dir=store_dir, cache_dir=self.tmp / "cache",
-                                     fetch=self.fetch, sleep=lambda s: None)
-        bars = source.daily(PKN_ISIN, PERIOD, now=FROZEN_NOW).bars
+        source = quotes.build_source(store_dir=store_dir, fetch=self.fetch, sleep=lambda s: None)
+        bars = source.daily(PKN, PERIOD, now=FROZEN_NOW).bars
         self.assertEqual([(b.session, b.close, b.source) for b in bars[-2:]],
                          [(bars[-2].session, bars[-2].close, "yahoo"),
                           (date(2026, 7, 24), price(1), "store")])
         self.assertEqual(len(self.calls), 1)
+
+    def test_opener_and_sleep_reach_yahoo(self):
+        """Without a fake fetch, Yahoo's own fetch goes through the given opener and sleep."""
+        urls, sleeps = [], []
+
+        def opener(request, timeout=None):
+            urls.append(request.full_url)
+            return io.BytesIO(json.dumps({"chart": {"result": [load_yahoo("PKN")]}}).encode())
+
+        bars = quotes.build_source(opener=opener, sleep=sleeps.append).daily(
+            PKN, PERIOD, now=FROZEN_NOW).bars
+        self.assertTrue(bars)
+        self.assertEqual(urls, ["https://query1.finance.yahoo.com/v8/finance/chart/PKN.WA"
+                                "?range=1y&interval=1d"])
+        self.assertEqual(len(sleeps), 1)                   # the throttle after the answer
 
 
 def bar(day, close, source="yahoo"):
@@ -102,20 +108,58 @@ def run(argv, source=None, **seams):
 class TestMain(unittest.TestCase):
     def test_answered_record(self):
         src = FakeSource(QuoteSeries(BARS, (STORE_PKN, YAHOO_PKN)))
-        doc = run(["PKN.PL", "--bars", "3"], src)
+        doc = run([PKN_ISIN, "--bars", "3"], src)
         self.assertEqual(doc["source"], src.description)      # the header describes the source asked
         self.assertEqual(doc["interval"], "daily")
-        rec = doc["quotes"]["PKN.PL"]
-        self.assertEqual((rec["yahoo_symbol"], rec["xtb"], rec["resolved_by"], rec["ok"]),
-                         ("PKN.WA", "PKN.PL", "symbols.json", True))
+        rec = doc["quotes"][PKN_ISIN]
+        self.assertEqual(list(rec)[:3], ["yahoo_symbol", "resolved_by", "ok"])   # no xtb
+        self.assertEqual((rec["yahoo_symbol"], rec["resolved_by"], rec["ok"]),
+                         ("PKN.WA", "symbols.json", True))
         self.assertEqual(rec["bars"], [bar_json(f"2026-07-{d}", float(d)) for d in (22, 23, 24)])
         self.assertNotIn("unavailable", rec)                # empty -> absent, as today
+
+    def test_a_key_that_is_no_isin_is_invalid_isin_and_only_that_key(self):
+        """Checked strictly, each key on its own: a wrong check digit, garbage, a broker ticker,
+        lower case and padding are no ISIN, and the rest of the run goes on."""
+        bad = ["PLPKN0000019", "garbage", "PKN.PL", "plpkn0000018", " PLPKN0000018"]
+        src = FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
+        doc = run([bad[0], PKN_ISIN, *bad[1:]], src)
+        self.assertEqual(list(doc["quotes"]), [bad[0], PKN_ISIN, *bad[1:]])
+        for key in bad:
+            with self.subTest(key=key):
+                self.assertEqual(doc["quotes"][key],
+                                 {"yahoo_symbol": None, "resolved_by": None, "ok": False,
+                                  "reason": "invalid_isin", "value": "[NO DATA]",
+                                  "unavailable": []})
+        self.assertTrue(doc["quotes"][PKN_ISIN]["ok"])
+        self.assertEqual([k for k, _ in src.asked], [PKN_ISIN])
+
+    def test_an_isin_outside_the_map_is_answered_by_the_store_and_yahoo_is_unmapped(self):
+        store_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, store_dir, True)
+        (store_dir / f"{APPLE_ISIN}.csv").write_text(
+            "date,open,high,low,close,volume,source\n2026-07-23,1,2,1,2,7,stooq\n"
+            "2026-07-24,2,3,2,3,8,stooq\n")
+        fetched, slept = [], []
+
+        def build(*, store_dir=None):
+            return quotes.build_source(store_dir=store_dir,
+                                       fetch=lambda sym, rng: fetched.append(sym),
+                                       sleep=slept.append)
+
+        rec = run(["--store", str(store_dir), APPLE_ISIN], build=build,
+                  today=date(2026, 7, 25))["quotes"][APPLE_ISIN]
+        self.assertEqual((rec["yahoo_symbol"], rec["resolved_by"], rec["ok"]), (None, None, True))
+        self.assertEqual([(b["date"], b["c"], b["source"]) for b in rec["bars"]],
+                         [("2026-07-23", 2.0, "store"), ("2026-07-24", 3.0, "store")])
+        self.assertEqual(rec["unavailable"], [{"source": "yahoo", "reason": "unmapped"}])
+        self.assertEqual((fetched, slept), ([], []))
 
     def test_a_bar_the_source_does_not_vouch_for_is_printed_untrusted_with_its_reason(self):
         placeholder = daily_bar("2026-07-24", 24, 24, 24, 24, 0,
                                 trust=Trust.untrusted("placeholder"))
-        rec = run(["PKN.PL", "--bars", "2"],
-                  FakeSource(QuoteSeries(BARS[:-1] + (placeholder,), (YAHOO_PKN,))))["quotes"]["PKN.PL"]
+        rec = run([PKN_ISIN, "--bars", "2"],
+                  FakeSource(QuoteSeries(BARS[:-1] + (placeholder,), (YAHOO_PKN,))))["quotes"][PKN_ISIN]
         self.assertEqual([(b["trusted"], b.get("untrusted_reason")) for b in rec["bars"]],
                          [(True, None), (False, "placeholder")])
         self.assertNotIn("untrusted_reason", rec["bars"][0])
@@ -124,37 +168,37 @@ class TestMain(unittest.TestCase):
         store_dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, store_dir, True)
 
-        def build(cache, *, store_dir=None):
-            return quotes.build_source(cache, store_dir=store_dir,
+        def build(*, store_dir=None):
+            return quotes.build_source(store_dir=store_dir,
                                        fetch=lambda sym, rng: (load_yahoo("PKN"), None),
                                        sleep=lambda s: None)
 
-        doc = run(["--store", str(store_dir), "PKN.PL"], build=build)
+        doc = run(["--store", str(store_dir), PKN_ISIN], build=build)
         self.assertEqual(doc["source"], "own candle store (one CSV per ISIN) > "
                                         "Yahoo Finance v8 chart (~15 min delayed)")
 
     def test_answered_record_lists_sources_that_did_not_answer(self):
         failures = (SourceFailure("store", "timeout"),)
-        rec = run(["PKN.PL"], FakeSource(QuoteSeries(BARS, (YAHOO_PKN,), failures)))["quotes"]["PKN.PL"]
+        rec = run([PKN_ISIN], FakeSource(QuoteSeries(BARS, (YAHOO_PKN,), failures)))["quotes"][PKN_ISIN]
         self.assertEqual(rec["unavailable"], [{"source": "store", "reason": "timeout"}])
 
     def test_unanswered_record_carries_yahoos_raw_reason_and_every_failure(self):
         err = QuoteSourceUnavailableError(
             (SourceFailure("store", "timeout"), SourceFailure("yahoo", "not_found")),
-            (STORE_PKN, Resolution("yahoo", "XXXX.WA", ResolvedBy.SUFFIX_GUESS)))
-        doc = run(["XXXX.PL"], FakeSource(error=err))
-        self.assertEqual(doc["quotes"]["XXXX.PL"],
-                         {"yahoo_symbol": "XXXX.WA", "xtb": None, "resolved_by": "suffix_guess",
+            (STORE_PKN, YAHOO_PKN))
+        doc = run([PKN_ISIN], FakeSource(error=err))
+        self.assertEqual(doc["quotes"][PKN_ISIN],
+                         {"yahoo_symbol": "PKN.WA", "resolved_by": "symbols.json",
                           "ok": False, "reason": "not_found", "value": "[NO DATA]",
                           "unavailable": [{"source": "store", "reason": "timeout"},
                                           {"source": "yahoo", "reason": "not_found"}]})
 
     def test_no_yahoo_entry_gives_none_fields_and_the_first_failures_reason(self):
-        ok = run(["PKN.PL"], FakeSource(QuoteSeries(BARS, (STORE_PKN,))))["quotes"]["PKN.PL"]
+        ok = run([PKN_ISIN], FakeSource(QuoteSeries(BARS, (STORE_PKN,))))["quotes"][PKN_ISIN]
         self.assertEqual((ok["yahoo_symbol"], ok["resolved_by"], ok["ok"]), (None, None, True))
         err = QuoteSourceUnavailableError((SourceFailure("store", "timeout"),
                                            SourceFailure("broker", "http_503")), (STORE_PKN,))
-        bad = run(["PKN.PL"], FakeSource(error=err))["quotes"]["PKN.PL"]
+        bad = run([PKN_ISIN], FakeSource(error=err))["quotes"][PKN_ISIN]
         self.assertEqual((bad["yahoo_symbol"], bad["resolved_by"], bad["reason"], bad["ok"]),
                          (None, None, "timeout", False))
 
@@ -164,8 +208,8 @@ class TestMain(unittest.TestCase):
         store_empty = FakeSource(QuoteSeries((), (STORE_PKN,)))
         yahoo_down = FakeSource(error=QuoteSourceUnavailableError(
             (SourceFailure("yahoo", "http_503"),), (YAHOO_PKN,)))
-        rec = run(["PKN.PL"], QuoteChain([store_empty, yahoo_down]))["quotes"]["PKN.PL"]
-        self.assertEqual(rec, {"yahoo_symbol": "PKN.WA", "xtb": "PKN.PL",
+        rec = run([PKN_ISIN], QuoteChain([store_empty, yahoo_down]))["quotes"][PKN_ISIN]
+        self.assertEqual(rec, {"yahoo_symbol": "PKN.WA",
                                "resolved_by": "symbols.json", "ok": False, "reason": "http_503",
                                "value": "[NO DATA]",
                                "unavailable": [{"source": "yahoo", "reason": "http_503"}]})
@@ -175,7 +219,7 @@ class TestMain(unittest.TestCase):
             (SourceFailure("store", "no_store"),)))
         yahoo_down = FakeSource(error=QuoteSourceUnavailableError(
             (SourceFailure("yahoo", "rate_limited"),), (YAHOO_PKN,)))
-        rec = run(["PKN.PL"], QuoteChain([store_down, yahoo_down]))["quotes"]["PKN.PL"]
+        rec = run([PKN_ISIN], QuoteChain([store_down, yahoo_down]))["quotes"][PKN_ISIN]
         self.assertEqual((rec["ok"], rec["reason"], rec["unavailable"]),
                          (False, "rate_limited", [{"source": "store", "reason": "no_store"},
                                                   {"source": "yahoo", "reason": "rate_limited"}]))
@@ -184,32 +228,32 @@ class TestMain(unittest.TestCase):
         missing = Path(tempfile.mkdtemp()) / "missing"
         self.addCleanup(shutil.rmtree, missing.parent, True)
         yahoo_ok = FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
-        rec = run(["PKN.PL"], QuoteChain([StoreQuotes(missing), yahoo_ok]))["quotes"]["PKN.PL"]
+        rec = run([PKN_ISIN], QuoteChain([StoreQuotes(missing), yahoo_ok]))["quotes"][PKN_ISIN]
         self.assertEqual((rec["ok"], rec["bars"][-1], rec["unavailable"]),
                          (True, bar_json("2026-07-24", 24.0),
                           [{"source": "store", "reason": "no_store"}]))
 
     def test_no_bars_from_a_source_that_answered_stays_ok(self):
         """Yahoo alone answering with nothing is an answer: ok:true, as before the store."""
-        rec = run(["PKN.PL"], FakeSource(QuoteSeries((), (YAHOO_PKN,))))["quotes"]["PKN.PL"]
+        rec = run([PKN_ISIN], FakeSource(QuoteSeries((), (YAHOO_PKN,))))["quotes"][PKN_ISIN]
         self.assertEqual((rec["ok"], rec["bars"]), (True, []))
         self.assertNotIn("unavailable", rec)
 
     def test_today_seam_ends_the_period(self):
         src = FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
-        run(["PKN.PL"], src, today=date(2026, 7, 25))
+        run([PKN_ISIN], src, today=date(2026, 7, 25))
         self.assertEqual(src.asked[0][1].end, date(2026, 7, 25))
 
-    def test_every_ticker_is_asked_for_one_period_ending_today(self):
+    def test_every_isin_is_asked_for_one_period_ending_today(self):
         src = FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
-        run(["PKN.PL", "ALE.PL"], src)
-        self.assertEqual([k for k, _ in src.asked], ["PKN.PL", "ALE.PL"])
+        run([PKN_ISIN, ALE_ISIN], src)
+        self.assertEqual([k for k, _ in src.asked], [PKN_ISIN, ALE_ISIN])
         self.assertEqual({p for _, p in src.asked}, {src.asked[0][1]})
         self.assertEqual(src.asked[0][1].end, date.today())
 
     def period_days(self, *argv):
         src = FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
-        run(["PKN.PL", *argv], src)
+        run([PKN_ISIN, *argv], src)
         return src.asked[0][1].days
 
     def test_period_spans_at_least_nine_days(self):
@@ -226,8 +270,8 @@ class TestMain(unittest.TestCase):
         self.assertEqual(self.period_days("--bars", "500000"), quotes.MAX_PERIOD_DAYS)
 
     def test_negative_bars_do_not_crash(self):
-        rec = run(["PKN.PL", "--bars", "-5"], FakeSource(QuoteSeries(BARS, (YAHOO_PKN,))))
-        self.assertTrue(rec["quotes"]["PKN.PL"]["ok"])
+        rec = run([PKN_ISIN, "--bars", "-5"], FakeSource(QuoteSeries(BARS, (YAHOO_PKN,))))
+        self.assertTrue(rec["quotes"][PKN_ISIN]["ok"])
 
 
 class TestToJson(unittest.TestCase):
@@ -326,55 +370,53 @@ class TestToJson(unittest.TestCase):
             quotes.to_json(object())
 
 
-class TestOutputPinnedAt040(unittest.TestCase):
-    """Without a store the consumer still finds everything plugin 0.4.0 printed, unchanged and in the
-    same order; the output may only add keys. fixtures/cli_0_4_0_PKN.json is the 0.4.0 output
-    (commit 2589785) for these arguments, fed by the same Yahoo fixture, minus 'generated' (the wall
-    clock). 'data_note' is prose for the reader and may grow. A key the output adds must be named in
-    NEW_KEYS: a new key is a contract change, so it is let in on purpose, not by accident."""
+def printed(doc):
+    """`doc` as the CLI prints it, minus 'generated' (the wall clock). Text, so a float that became
+    an int (156.0 -> 156), a key out of order and a key added all show."""
+    doc = {k: v for k, v in doc.items() if k != "generated"}
+    return json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
 
-    ARGV = ["PKN.PL", "--atr", "--swings"]
-    NOT_COMPARED = {"generated", "data_note"}
-    NEW_KEYS = {"trusted", "untrusted_reason", "status", "excluded_sessions"}
+
+class TestOutputPinned(unittest.TestCase):
+    """Without a store the output for PKN, fed by the same Yahoo fixture, is pinned. 0.7.0 changed
+    the input to ISINs only and dropped the `xtb` field; nothing else may have moved. So 0.6.0's
+    output (fixtures/cli_0_6_0_PKN.json, `PKN.PL --atr --swings`, never edited) minus `xtb` and keyed
+    by the ISIN is what 0.7.0 prints, and fixtures/cli_0_7_0_PLPKN0000018.json pins that byte for
+    byte from here on."""
+
+    ARGV = [PKN_ISIN, "--atr", "--swings"]
 
     def output(self, argv=ARGV):
-        source = quotes.build_source(False, fetch=lambda sym, rng: (load_yahoo("PKN"), None),
+        source = quotes.build_source(fetch=lambda sym, rng: (load_yahoo("PKN"), None),
                                      sleep=lambda s: None)
         return run(argv, source)
 
-    def assertPinnedPlusNewKeys(self, pinned, got, path="$"):
-        if isinstance(pinned, dict):
-            self.assertIsInstance(got, dict, path)
-            added = set(got) - set(pinned)
-            self.assertLessEqual(added, self.NEW_KEYS, f"{path}: keys 0.4.0 did not print")
-            self.assertEqual([k for k in got if k in pinned], list(pinned), f"{path}: key order")
-            for k in pinned:
-                self.assertPinnedPlusNewKeys(pinned[k], got[k], f"{path}.{k}")
-        elif isinstance(pinned, list):
-            self.assertIsInstance(got, list, path)
-            self.assertEqual(len(got), len(pinned), f"{path}: length")
-            for i, (p, g) in enumerate(zip(pinned, got)):
-                self.assertPinnedPlusNewKeys(p, g, f"{path}[{i}]")
-        else:                                       # 156.0 and 156 are not the same output
-            self.assertEqual((type(got), got), (type(pinned), pinned), path)
+    @staticmethod
+    def pinned_0_6_0_as_0_7_0():
+        with open(os.path.join(FX, "cli_0_6_0_PKN.json"), encoding="utf-8") as f:
+            doc = json.load(f)
+        rec = {k: v for k, v in doc["quotes"].pop("PKN.PL").items() if k != "xtb"}
+        doc["quotes"][PKN_ISIN] = rec
+        return doc
 
-    def test_records_are_0_4_0_plus_only_new_keys(self):
-        doc = self.output()
-        with open(os.path.join(FX, "cli_0_4_0_PKN.json"), encoding="utf-8") as f:
-            pinned = json.load(f)
-        for k in self.NOT_COMPARED:
-            doc.pop(k, None)
-            pinned.pop(k, None)
-        self.assertPinnedPlusNewKeys(pinned, doc)
+    def test_continuity_with_0_6_0_minus_xtb_keyed_by_the_isin(self):
+        expected = self.pinned_0_6_0_as_0_7_0()
+        self.assertEqual(list(expected["quotes"]), [PKN_ISIN])       # the rekeying did happen
+        self.assertEqual(printed(self.output()), printed(expected))
+
+    def test_header_and_records_match_0_7_0(self):
+        with open(os.path.join(FX, "cli_0_7_0_PLPKN0000018.json"), encoding="utf-8") as f:
+            pinned = f.read()
+        self.assertEqual(printed(self.output()), pinned)
 
     def test_without_placeholders_every_daily_bar_is_trusted(self):
-        bars = self.output()["quotes"]["PKN.PL"]["bars"]
+        bars = self.output()["quotes"][PKN_ISIN]["bars"]
         self.assertTrue(bars)
         self.assertEqual({(b["trusted"], "untrusted_reason" in b) for b in bars}, {(True, False)})
 
     def test_without_placeholders_every_derived_value_is_good(self):
         for interval in ("d", "w", "m"):
-            rec = self.output([*self.ARGV, "--interval", interval])["quotes"]["PKN.PL"]
+            rec = self.output([*self.ARGV, "--interval", interval])["quotes"][PKN_ISIN]
             derived = [rec["last_closed"], rec["swing_lows"]]
             derived += [rec["atr"]] if rec["atr"] else []          # MN: too short for ATR(14)
             derived += rec["bars"] if interval != "d" else []
@@ -382,28 +424,13 @@ class TestOutputPinnedAt040(unittest.TestCase):
                 self.assertEqual({(d["status"], tuple(d["excluded_sessions"])) for d in derived},
                                  {("good", ())})
 
-    def test_the_comparison_catches_a_changed_value_and_an_unannounced_key(self):
-        pinned = {"a": [{"c": 1.0}]}
-        for got in ({"a": [{"c": 1}]}, {"a": [{"c": 1.0, "surprise": 0}]}, {"a": [{"c": 2.0}]}):
-            with self.subTest(got=got), self.assertRaises(AssertionError):
-                self.assertPinnedPlusNewKeys(pinned, got)
-
-
-class TestOutputPinnedAt060(unittest.TestCase):
-    """Without a store the consumer reads what plugin 0.6.0 printed: header and records byte for
-    byte. fixtures/cli_0_6_0_PKN.json is the 0.6.0 output for these arguments, fed by the same Yahoo
-    fixture, minus 'generated' (the wall clock). TestOutputPinnedAt040 keeps the older promise."""
-
-    ARGV = ["PKN.PL", "--atr", "--swings"]
-
-    def test_header_and_records_match_0_6_0(self):
-        source = quotes.build_source(False, fetch=lambda sym, rng: (load_yahoo("PKN"), None),
-                                     sleep=lambda s: None)
-        doc = run(self.ARGV, source)
-        del doc["generated"]
-        with open(os.path.join(FX, "cli_0_6_0_PKN.json"), encoding="utf-8") as f:
-            pinned = f.read()
-        self.assertEqual(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", pinned)
+    def test_the_comparison_catches_a_changed_value_an_added_key_and_a_new_order(self):
+        pinned = {"generated": "x", "a": [{"c": 1.0, "d": 2.0}]}
+        for got in ({"a": [{"c": 1, "d": 2.0}]}, {"a": [{"c": 1.0, "d": 2.0, "surprise": 0}]},
+                    {"a": [{"c": 2.0, "d": 2.0}]}, {"a": [{"d": 2.0, "c": 1.0}]}):
+            with self.subTest(got=got):
+                self.assertNotEqual(printed(got), printed(pinned))
+        self.assertEqual(printed({"generated": "y", "a": [{"c": 1.0, "d": 2.0}]}), printed(pinned))
 
 
 class TestPlaceholderSessionsEndToEnd(unittest.TestCase):
@@ -442,14 +469,14 @@ class TestPlaceholderSessionsEndToEnd(unittest.TestCase):
     def output(self, *argv):
         response = self.yahoo_response()
 
-        def build(cache, *, store_dir=None):
-            return quotes.build_source(cache, store_dir=store_dir, cache_dir=self.tmp / "cache",
+        def build(*, store_dir=None):
+            return quotes.build_source(store_dir=store_dir,
                                        fetch=lambda sym, rng: (response, None),
                                        sleep=lambda s: None)
 
-        doc = run(["--store", str(self.store), "PKN.PL", *argv], build=build,
+        doc = run(["--store", str(self.store), PKN_ISIN, *argv], build=build,
                   today=date(2026, 10, 10))
-        return doc["quotes"]["PKN.PL"]
+        return doc["quotes"][PKN_ISIN]
 
     def test_store_sessions_are_trusted_and_placeholders_are_marked(self):
         rec = self.output("--bars", "7")
@@ -479,9 +506,9 @@ class TestCountFlags(unittest.TestCase):
     printed a negative ATR as settled, --atr 0 quietly printed none, and --swings -1 crashed."""
 
     def output(self, *argv):
-        source = quotes.build_source(False, fetch=lambda sym, rng: (load_yahoo("PKN"), None),
+        source = quotes.build_source(fetch=lambda sym, rng: (load_yahoo("PKN"), None),
                                      sleep=lambda s: None)
-        return run(["PKN.PL", *argv], source)["quotes"]["PKN.PL"]
+        return run([PKN_ISIN, *argv], source)["quotes"][PKN_ISIN]
 
     def test_a_count_below_one_is_rejected_before_anything_runs(self):
         for argv in (["--atr", "0"], ["--atr", "-3"], ["--swings", "0"], ["--swings", "-1"],
@@ -490,7 +517,7 @@ class TestCountFlags(unittest.TestCase):
             err = io.StringIO()
             with self.subTest(argv=argv), contextlib.redirect_stderr(err), \
                     self.assertRaises(SystemExit) as exit_:
-                run(["PKN.PL", *argv], src)
+                run([PKN_ISIN, *argv], src)
             self.assertEqual(exit_.exception.code, 2)
             self.assertEqual(src.asked, [])
             self.assertIn("at least 1", err.getvalue())
@@ -512,33 +539,38 @@ class TestCountFlags(unittest.TestCase):
 
 
 class TestFlagsReachTheCompositionRoot(unittest.TestCase):
-    """main() hands --cache and --store to build (the build_source seam) and nothing else does."""
+    """main() hands --store to build (the build_source seam) and nothing else does."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self.built = []                     # (cache, store_dir) per build call
+        self.built = []                     # store_dir per build call
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def build(self, cache, *, store_dir=None):
-        self.built.append((cache, store_dir))
+    def build(self, *, store_dir=None):
+        self.built.append(store_dir)
         return FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
 
     def test_store_dir_reaches_build(self):
-        run(["--store", str(self.tmp), "PKN.PL"], build=self.build)
-        self.assertEqual(self.built, [(False, self.tmp)])
+        run(["--store", str(self.tmp), PKN_ISIN], build=self.build)
+        self.assertEqual(self.built, [self.tmp])
 
-    def test_cache_flag_reaches_build(self):
-        run(["--cache", "PKN.PL"], build=self.build)
-        self.assertEqual(self.built, [(True, None)])
+    def test_cache_flag_is_rejected_before_anything_runs(self):
+        """There is no cache (ADR 0004): a caller still passing --cache is told so, not ignored."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as exit_:
+            run(["--cache", PKN_ISIN], build=self.build)
+        self.assertEqual(exit_.exception.code, 2)
+        self.assertEqual(self.built, [])
+        self.assertIn("--cache", err.getvalue())
 
     def test_unsubstituted_variable_in_store_is_rejected_before_anything_runs(self):
         """A skill whose ${CLAUDE_PROJECT_DIR} was not expanded must not read as 'no store'."""
         literal = self.tmp / "${CLAUDE_PROJECT_DIR}" / "data" / "market-data"
         err = io.StringIO()
         with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as exit_:
-            run(["--store", str(literal), "PKN.PL"], build=self.build)
+            run(["--store", str(literal), PKN_ISIN], build=self.build)
         self.assertEqual(exit_.exception.code, 2)
         self.assertEqual(self.built, [])
         self.assertIn("${", err.getvalue())
@@ -551,7 +583,7 @@ class TestFlagsReachTheCompositionRoot(unittest.TestCase):
         store = self.tmp / "data" / "market-data"            # tmp/data does not exist
         err = io.StringIO()
         with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as exit_:
-            run(["--store", str(store), "PKN.PL"], build=self.build)
+            run(["--store", str(store), PKN_ISIN], build=self.build)
         self.assertEqual(exit_.exception.code, 2)
         self.assertEqual(self.built, [])
         self.assertIn(f"parent directory '{self.tmp / 'data'}' does not exist", err.getvalue())
@@ -560,8 +592,8 @@ class TestFlagsReachTheCompositionRoot(unittest.TestCase):
 
     def test_missing_store_under_an_existing_parent_still_reaches_build(self):
         """The store directory itself missing is a project without a store yet, not a bad path."""
-        run(["--store", str(self.tmp / "market-data"), "PKN.PL"], build=self.build)
-        self.assertEqual(self.built, [(False, self.tmp / "market-data")])
+        run(["--store", str(self.tmp / "market-data"), PKN_ISIN], build=self.build)
+        self.assertEqual(self.built, [self.tmp / "market-data"])
 
 
 if __name__ == "__main__":

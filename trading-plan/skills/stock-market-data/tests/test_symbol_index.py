@@ -1,4 +1,5 @@
-"""market_data.adapters.symbol_index — symbols.json read into Instruments, by ISIN or broker ticker."""
+"""market_data.adapters.symbol_index — symbols.json read into Instruments, looked up by ISIN; any
+namespace's symbol found back to its ISIN."""
 from __future__ import annotations
 
 import json
@@ -17,21 +18,26 @@ class TestLookup(unittest.TestCase):
         self.index = SymbolIndex(quotes.SYMBOLS)
 
     def test_by_isin(self):
-        i = self.index.lookup("PLPKN0000018")
-        self.assertEqual((i.key, i.isin), ("PLPKN0000018", Isin.parse("PLPKN0000018")))
-        self.assertEqual(dict(i.symbols), {"xtb": "PKN.PL", "yahoo": "PKN.WA"})
-
-    def test_by_broker_ticker(self):
-        i = self.index.lookup("PKN.PL")
-        self.assertEqual((i.key, i.isin), ("PKN.PL", Isin.parse("PLPKN0000018")))
-        self.assertEqual(dict(i.symbols), {"xtb": "PKN.PL", "yahoo": "PKN.WA"})
+        i = self.index.lookup(Isin.parse("PLPKN0000018"))
+        self.assertEqual(i, Instrument(isin=Isin.parse("PLPKN0000018"),
+                                       symbols={"xtb": "PKN.PL", "yahoo": "PKN.WA"}))
 
     def test_rename_guard(self):            # xStation SPL.PL <-> Yahoo EBP.WA, bridged by ISIN
-        i = self.index.lookup("SPL.PL")
-        self.assertEqual((i.isin, i.symbols.get("yahoo")), (Isin.parse("PLBZ00000044"), "EBP.WA"))
+        i = self.index.lookup(Isin.parse("PLBZ00000044"))
+        self.assertEqual(dict(i.symbols), {"xtb": "SPL.PL", "yahoo": "EBP.WA"})
 
-    def test_unknown_key_is_unmapped(self):
-        self.assertEqual(self.index.lookup("ZZZ.PL"), Instrument.unmapped("ZZZ.PL"))
+    def test_an_isin_outside_the_map_keeps_its_isin_and_has_no_symbols(self):
+        apple = Isin.parse("US0378331005")
+        self.assertEqual(self.index.lookup(apple), Instrument(isin=apple, symbols={}))
+
+    def test_a_broker_ticker_is_no_key(self):
+        """Only an ISIN names an instrument (ADR 0003); a ticker goes through find."""
+        self.assertNotIn("PKN.PL", self.index)
+        self.assertIn(Isin.parse("PLPKN0000018"), self.index)
+
+    def test_contains_says_whether_the_map_has_the_isin(self):
+        self.assertIn(Isin.parse("PLROBYG00321"), self.index)          # mapped, no broker symbol
+        self.assertNotIn(Isin.parse("US0378331005"), self.index)
 
 
 class TestFind(unittest.TestCase):
@@ -115,31 +121,6 @@ class TestConstruction(unittest.TestCase):
                                                                 "yahoo": "V80A.DE"}}})
             index = SymbolIndex(path)
             self.assertEqual(index.find("xtb", "V80A.DE"), index.find("yahoo", "V80A.DE"))
-
-
-class TestBrokerSymbol(unittest.TestCase):
-    """The execution-venue ticker a caller needs to name a state-file row. Never guessed."""
-
-    def setUp(self):
-        self.index = SymbolIndex(quotes.SYMBOLS)
-
-    def xtb(self, key):
-        return self.index.lookup(key).symbols.get("xtb")
-
-    def test_by_isin(self):                 # sourcing keys by ISIN, writes the broker ticker
-        self.assertEqual(self.xtb("PLPKN0000018"), "PKN.PL")
-
-    def test_by_broker_ticker(self):        # already a broker ticker -> itself
-        self.assertEqual(self.xtb("PKN.PL"), "PKN.PL")
-
-    def test_rename_guard(self):            # broker keeps the old root; Yahoo moved off it
-        self.assertEqual(self.xtb("PLCCC0000016"), "CCC.PL")
-
-    def test_unlisted_is_none(self):        # mapped instrument the broker does not offer
-        self.assertIsNone(self.xtb("PLROBYG00321"))
-
-    def test_unmapped_is_none(self):        # never inferred from the GPW root
-        self.assertIsNone(self.xtb("ZZZ.PL"))
 
 
 if __name__ == "__main__":

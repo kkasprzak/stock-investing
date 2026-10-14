@@ -292,7 +292,7 @@ class TestRealExports(TempDir):
     def atr(self, path, isin):
         """The way the CLI gets there: the import writes the store file, StoreQuotes reads it."""
         store_file.write(self.tmp / f"{isin}.csv", stooq.parse(path))
-        instrument = Instrument(key=isin, isin=Isin.parse(isin), symbols={})
+        instrument = Instrument(isin=Isin.parse(isin), symbols={})
         series = StoreQuotes(self.tmp).daily(
             instrument, DateRange(date(2026, 1, 1), date(2026, 10, 9)), now=0.0)
         return atr_wilder(list(series.bars))
@@ -338,17 +338,17 @@ class TestImport(TempDir):
         self.store = self.tmp / "data" / "market-data"           # does not exist yet
         self.store.parent.mkdir()                                # its parent does, as in a project
 
-    def run_import(self, export: Path, key="PKN.PL", today=TODAY):
-        code, out, err = run(["--store", str(self.store), "stooq", str(export), "--for", key],
+    def run_import(self, export: Path, isin="PLPKN0000018", today=TODAY):
+        code, out, err = run(["--store", str(self.store), "stooq", str(export), "--for", isin],
                              today=today)
         return code, (json.loads(out) if out else None), err
 
     def test_first_import_creates_the_store_and_the_file(self):
-        code, report, err = self.run_import(Path(FX) / "stooq_ale_d_raw.csv", "ALE.PL",
+        code, report, err = self.run_import(Path(FX) / "stooq_ale_d_raw.csv", "LU2237380790",
                                             today=date(2026, 10, 12))
         self.assertEqual((code, err), (0, ""))
         path = self.store / "LU2237380790.csv"
-        self.assertEqual(report, {"isin": "LU2237380790", "key": "ALE.PL", "file": str(path),
+        self.assertEqual(report, {"isin": "LU2237380790", "file": str(path),
                                   "added": 114, "unchanged": 0, "changed": 0, "changed_dates": [],
                                   "imported": {"first": "2026-05-04", "last": "2026-10-09"}})
         self.assertTrue(path.read_bytes().startswith(b"date,open,high,low,close,volume,source\n"
@@ -424,9 +424,11 @@ class TestImport(TempDir):
         self.assertIn("nope.csv", err)
         self.assertFalse(self.store.exists())
 
-    def test_an_isin_works_as_the_key(self):
-        code, report, _ = self.run_import(self.export(PKN_EXPORT), key="PLPKN0000018")
-        self.assertEqual((code, report["isin"], report["key"]), (0, "PLPKN0000018", "PLPKN0000018"))
+    def test_an_isin_outside_the_symbol_map_is_imported(self):
+        """The store file is named by the ISIN alone; the map is not consulted."""
+        code, report, err = self.run_import(self.export(PKN_EXPORT), "US0378331005")
+        self.assertEqual((code, err, report["isin"], report["added"]), (0, "", "US0378331005", 3))
+        self.assertTrue((self.store / "US0378331005.csv").exists())
 
     def read_store(self):
         with open(self.store / PKN_FILE, encoding="utf-8", newline="") as f:
@@ -437,23 +439,27 @@ class TestImportUsage(TempDir):
     """Usage errors exit 2 and touch nothing."""
 
     def test_store_is_required(self):
-        code, _, err = run(["stooq", os.path.join(FX, "stooq_pkn_d.csv"), "--for", "PKN.PL"])
+        code, _, err = run(["stooq", os.path.join(FX, "stooq_pkn_d.csv"), "--for", "PLPKN0000018"])
         self.assertEqual(code, 2)
         self.assertIn("--store", err)
 
-    def test_unknown_ticker(self):
+    def test_for_takes_an_isin_only(self):
+        """Checked strictly: a broker ticker, a wrong check digit, lower case and padding are
+        refused before anything is read or written."""
         store = self.tmp / "store"
-        code, out, err = run(["--store", str(store), "stooq", os.path.join(FX, "stooq_pkn_d.csv"),
-                              "--for", "ZZZ.PL"])
-        self.assertEqual((code, out), (2, ""))
-        self.assertIn("ZZZ.PL", err)
-        self.assertFalse(store.exists())
+        for key in ("PKN.PL", "PLPKN0000019", "plpkn0000018", " PLPKN0000018"):
+            with self.subTest(key=key):
+                code, out, err = run(["--store", str(store), "stooq",
+                                      os.path.join(FX, "stooq_pkn_d.csv"), "--for", key])
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn(repr(key), err)
+                self.assertFalse(store.exists())
 
     def test_unsubstituted_project_dir_is_refused_not_created(self):
         # A skill whose ${CLAUDE_PROJECT_DIR} was not substituted would hand the literal over.
         store = self.tmp / "${CLAUDE_PROJECT_DIR}" / "data" / "market-data"
         code, out, err = run(["--store", str(store), "stooq", os.path.join(FX, "stooq_pkn_d.csv"),
-                              "--for", "PKN.PL"])
+                              "--for", "PLPKN0000018"])
         self.assertEqual((code, out), (2, ""))
         self.assertIn("${", err)
         self.assertFalse((self.tmp / "${CLAUDE_PROJECT_DIR}").exists())
@@ -477,7 +483,8 @@ class TestImportStorePath(TempDir):
         self.read_only.append(path)
 
     def run_import(self, store: Path):
-        return run(["--store", str(store), "stooq", str(self.export(PKN_EXPORT)), "--for", "PKN.PL"],
+        return run(["--store", str(store), "stooq", str(self.export(PKN_EXPORT)),
+                    "--for", "PLPKN0000018"],
                    today=TODAY)
 
     def assertRejectedCleanly(self, code, out, err):

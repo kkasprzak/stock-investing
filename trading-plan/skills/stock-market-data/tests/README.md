@@ -32,18 +32,21 @@ test_indicators.py      market_data/indicators.py — aggregate, last_closed, AT
                         fields and the counts they refuse), the quality every reading carries,
                         placeholder sessions (ADR 0002), Stooq oracle
 test_quote_chain.py     market_data/quote_chain.py — QuoteChain: trust order, gap filling, sources that did not answer
-test_yahoo.py           market_data/adapters/yahoo.py — resolve, range buckets, cache, session close, backfill,
+test_yahoo.py           market_data/adapters/yahoo.py — resolve (the map's symbol or none; no symbol is
+                        unmapped, with no request and no pause), range buckets, session close, backfill,
                         to_bar (row to DailyBar, an unusable price to a gap on an untrusted bar), the
-                        placeholder rule, live smoke
-test_symbol_index.py    market_data/adapters/symbol_index.py — lookup by ISIN / broker ticker, broker symbol,
+                        placeholder rule, fetch_chart (the symbol escaped into the URL, retries and
+                        their pauses, the last attempt's reason), live smoke
+test_symbol_index.py    market_data/adapters/symbol_index.py — lookup by ISIN (one outside the map: no symbols),
                         find (a namespace's symbol back to its ISIN), name, every map entry indexed,
                         a bad ISIN or a symbol twice in one namespace fails construction
 test_symbols.py         scripts/symbols.py — --from xtb and --to xtb, found / not found, a mapped ISIN
                         the broker does not offer (xtb null), invalid_isin, mixed keys in one call,
                         yahoo or an unknown namespace exits 2
 test_cli.py             scripts/quotes.py — build_source (the composition root), main() over an injected source,
-                        flags reaching build, --atr/--swings counts below 1 rejected, to_json, the 0.4.0
-                        and 0.6.0 output pins, placeholder sessions end to end
+                        flags reaching build, --atr/--swings counts below 1 rejected, ISIN-only input
+                        (invalid_isin, unmapped), to_json, the output pins (continuity with 0.6.0,
+                        0.7.0 byte for byte), placeholder sessions end to end
 fixtures/               see below
 ```
 
@@ -66,10 +69,14 @@ stooq_ale_d_raw.csv             same kind of export, ALE 2026-05-04..2026-10-09,
 stooq_peo_w_raw.csv             same kind of export, weekly (41 weeks dated on Sundays): must be rejected
 store/PLPKN0000018.csv          hand-written, in the store's own schema (LF): 2026-10-02 and 10-05..10-09, round numbers
 cli_0_4_0_PKN.json              the output of plugin 0.4.0 (commit 2589785) for `PKN.PL --atr --swings` on
-                                yahoo_PKN.json, minus `generated`: without a store the output may only add
-                                announced keys to it
+                                yahoo_PKN.json, minus `generated`; read only for its header's `source`
+                                (test_yahoo.py)
 cli_0_6_0_PKN.json              the output of plugin 0.6.0 for the same arguments on the same fixture, minus
-                                `generated`: without a store the output must not change, byte for byte
+                                `generated`; never edited: minus `xtb` and keyed by the ISIN it is what
+                                0.7.0 prints (the continuity test)
+cli_0_7_0_PLPKN0000018.json     the output of plugin 0.7.0 for `PLPKN0000018 --atr --swings` on the same
+                                fixture, minus `generated`: without a store the output must not change,
+                                byte for byte
 ```
 
 No fixture holds the October placeholders. `TestPlaceholderSessionsEndToEnd` (`test_cli.py`) builds
@@ -93,11 +100,13 @@ and `import market_data...`. The module is named `support`, not
 No mocks. Whatever a test needs to replace is a seam the code already offers: a source is a fake
 class implementing the `QuoteSource` port — `support.FakeSource` (one fixed answer or one fixed
 error, recording what it was asked; used by `test_cli.py` and `test_store.py`), and `ChainFake`,
-local to `test_quote_chain.py`, for the chain's own cases. The Yahoo adapter takes its `fetch` and
-`sleep` as constructor arguments, so `test_yahoo.py` hands it fixtures and a no-op or recording
-sleep. `quotes.main(argv, source=, build=, today=)` and `build_source(cache, store_dir=...,
-cache_dir=..., fetch=..., sleep=...)` take the same injections, so the CLI is tested without the
-network and without touching the real cache. The store is a directory on disk: the
+local to `test_quote_chain.py`, for the chain's own cases. The Yahoo adapter takes its `fetch`,
+`opener` and `sleep` as constructor arguments, so `test_yahoo.py` hands it fixtures and a no-op or
+recording sleep; `fetch_chart` itself takes the `opener` in place of `urlopen`, so its tests script
+bodies, HTTP errors and timeouts without the network and without really pausing.
+`quotes.main(argv, source=, build=, today=)` and `build_source(store_dir=..., fetch=..., opener=...,
+sleep=...)` take the same injections, so the CLI is tested without the network. The store is a
+directory on disk: the
 `fixtures/store/` directory, or a temp one; `import_quotes.main(argv, today=)` takes the date, so
 "no session after today" does not follow the clock.
 
@@ -116,7 +125,8 @@ values; the tests re-assert them on every run.
 ## Layers
 
 - **Unit** — `resolve` (`test_yahoo.py`), `_period`, `aggregate`, `last_closed`
-  (`test_indicators.py`), `build_daily` null-close backfill (`test_yahoo.py`), the value objects
+  (`test_indicators.py`), `build_daily` null-close backfill and `fetch_chart`'s URL, retries and
+  reasons over a scripted opener (`test_yahoo.py`), the value objects
   (`test_model.py`) and symbol lookup (`test_symbol_index.py`).
 - **Stooq oracle** (`TestStooqOracle`) — pipeline vs Stooq, to the grosz, over the hand-verified
   recent window per interval. Low/Close always match; the two ex-dividend weeks (PKN 2026-06-15,
@@ -126,10 +136,8 @@ values; the tests re-assert them on every run.
   just-closed week complete on a Saturday).
 - **Session close** (`TestSessionClose`) — the flag follows the venue's session, not the date: today's
   bar forming during the session, complete after the close and all evening, conservative when the
-  vendor omits the trading period, market tz beating machine tz. On the cache side: an entry written
-  before the close is refetched after it, one written after the close is reused, and a hit is
-  re-stamped against the read clock (an evening entry whose bar was stored as forming comes back
-  closed once the market's date has moved on). Weekly/monthly counterparts live in `TestAggregate`.
+  vendor omits the trading period, market tz beating machine tz. Weekly/monthly counterparts live in
+  `TestAggregate`.
 - **ATR** (`TestATR`) — the number two risk skills must agree on, pinned from three sides: arithmetic
   hand-computable at `n=2` (including the `|prevC - L|` branch), independence from `--bars` in both
   directions (a short slice cannot starve it, a wide fetch cannot shift it), and a regression golden at
@@ -140,7 +148,7 @@ values; the tests re-assert them on every run.
   is not; `TestDaily`: Yahoo labels every bar with its `source` and raises when it did not answer.
 - **Trust** — each source judges its own sessions. `TestPlaceholder` (`test_yahoo.py`): a bar with
   `o == h == l == c` and volume 0 or missing is untrusted `"placeholder"`, judged alone (the first
-  bar of an answer too, five in a row all of them), forming bars and cache hits included; a flat bar
+  bar of an answer too, five in a row all of them), forming bars included; a flat bar
   with volume, a bar with a range and no volume, and a bar with a missing price stay trusted.
   `TestToBar`: an open, high, low or close Yahoo sent that is no price (0, negative, not finite)
   becomes `null` and makes the bar untrusted `"unusable_price"`, which also wins over `"placeholder"`
@@ -166,7 +174,7 @@ values; the tests re-assert them on every run.
   round-trips byte for byte, sorts, replaces atomically; `merge` counts added / unchanged / changed
   by value (`133.5` equals `133.50`), `source` aside.
 - **Store, adapter** (`test_store.py`) — every row up to the period end and none after; an empty
-  answer for an ISIN without a file (still resolved) and for an unmapped instrument; `no_store`
+  answer for an ISIN without a file (still resolved); an ISIN outside the map answered as any other; `no_store`
   when the directory is missing, `malformed` (plus `path:line` on stderr) for a broken file; in a
   chain the store wins a shared date.
 - **Importer** (`test_import_stooq.py`) — snap examples for prices and volume (the radius is 1e-5
@@ -181,22 +189,24 @@ values; the tests re-assert them on every run.
   header-only export writes nothing. Exit 1, store untouched: a session after today, a bad row (the stored file stays byte for
   byte), a broken store file (not overwritten), a missing export; and, without a traceback
   (`TestImportStorePath`), a `--store` that is a file, a store directory without write permission,
-  one that cannot be created (both skipped as root). Exit 2: a missing `--store`, an unknown
-  ticker, a literal `${` in `--store`, a `--store` whose parent directory does not exist (nothing
+  one that cannot be created (both skipped as root). An ISIN outside the map is imported. Exit 2: a
+  missing `--store`, a `--for` that is no ISIN (a ticker, a check digit, lower case, a space), a literal `${` in `--store`, a `--store` whose parent directory does not exist (nothing
   created).
-- **CLI** (`test_cli.py`) — `build_source` without a cache writes nothing, with one writes one
-  file, with a store asks it before Yahoo; the `ok:true` / `ok:false` records (one `ok:false` path
-  for a failed chain and for no bars while a source did not answer), the header naming every
-  source in trust order, and `--bars` edge values that must not crash.
-  `TestFlagsReachTheCompositionRoot`: `--store` and `--cache` reach `build_source` through `main()`,
-  and a literal `${` in `--store`, or a `--store` whose parent directory does not exist, exits 2
-  before anything is built; a missing store directory under an existing parent still reaches it.
+- **CLI** (`test_cli.py`) — `build_source` fetches on every call (there is no cache), with a
+  store asks it before Yahoo, and hands its opener and sleep through to Yahoo's fetch; the `ok:true` / `ok:false` records (one `ok:false` path
+  for a failed chain and for no bars while a source did not answer), no `xtb` field, a key that is
+  no ISIN (check digit, garbage, a ticker, lower case, a space) `invalid_isin` for that key alone,
+  an ISIN outside the map answered by the store with Yahoo `unmapped` and never fetched, the header
+  naming every source in trust order, and `--bars` edge values that must not crash.
+  `TestFlagsReachTheCompositionRoot`: `--store` reaches `build_source` through `main()`, and
+  `--cache`, a literal `${` in `--store`, or a `--store` whose parent directory does not exist,
+  exits 2 before anything is built; a missing store directory under an existing parent still reaches it.
   `to_json`: a daily bar prints `trusted` and, only when false, `untrusted_reason`; a W1/MN bar and
-  every reading print `status` and `excluded_sessions`. `TestOutputPinnedAt040`: without a store the
-  output is `fixtures/cli_0_4_0_PKN.json` plus only the keys named in `NEW_KEYS`, in the same order
-  and with the same values (`data_note` aside); without placeholders every bar is trusted and every
-  derived value `good` on D1, W1 and MN. `TestOutputPinnedAt060`: without a store the output equals
-  `fixtures/cli_0_6_0_PKN.json` byte for byte. `TestPlaceholderSessionsEndToEnd`: store bars
+  every reading print `status` and `excluded_sessions`. `TestOutputPinned`: without a store the
+  output equals `fixtures/cli_0_6_0_PKN.json` minus `xtb` and keyed by the ISIN (continuity), and
+  `fixtures/cli_0_7_0_PLPKN0000018.json` byte for byte; without placeholders every bar is trusted
+  and every derived value `good` on D1, W1 and MN; the comparison itself catches a changed value,
+  a float printed as an int, an added key and a new key order. `TestPlaceholderSessionsEndToEnd`: store bars
   trusted, Yahoo placeholders marked, ATR and `last_closed` as of the last real session and
   `uncertain` with the gap's dates, the week of placeholders `no_value`.
 - **Names** (`test_symbols.py`) — `main()` with its output parsed: a ticker or an ISIN the map does
@@ -216,9 +226,9 @@ When Yahoo's format or the mapping changes, re-capture: fetch `range=1y&interval
 keep the last ~150 bars + `meta` (`gmtoffset`, `regularMarketPrice`, `regularMarketTime`,
 `currentTradingPeriod`), and re-trim
 the `stooq_{pkn,kgh,lpp}_*` CSVs to their last ~16 rows. Then re-pin `FROZEN_TODAY` and refresh the
-expected values. A re-captured `yahoo_PKN.json` also means regenerating `cli_0_4_0_PKN.json` with
-plugin 0.4.0 (commit 2589785) and `cli_0_6_0_PKN.json` with plugin 0.6.0, not with the current code,
-or the pins stop pinning anything.
+expected values. A re-captured `yahoo_PKN.json` also means regenerating `cli_0_6_0_PKN.json` with
+plugin 0.6.0 and `cli_0_7_0_PLPKN0000018.json` with plugin 0.7.0, not with the current code, or the
+pins stop pinning anything.
 
 The `_raw` exports are not re-captured: the ATR pins and the snap guard are tied to them as they
 are. A new export goes in under a new name.

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """stock-market-data importer: a provider's export into this project's own candle store.
 
-  python3 import_quotes.py --store DIR stooq <export.csv> --for PEO.PL
+  python3 import_quotes.py --store DIR stooq <export.csv> --for PLPEKAO00016
 
 The write side of the store (quotes.py only reads it). One file per ISIN, <ISIN>.csv under --store;
-the instrument is named with --for, a broker ticker or an ISIN from symbols.json. Stooq's daily
+the instrument is named with --for, by its ISIN alone (checked strictly; it need not be in
+symbols.json, which this importer never reads). Stooq's daily
 export lists closed sessions only (a day that has not closed is not in it), so a row dated today is
 that closed session and is imported; one dated after today rejects the file. The first problem
 rejects the whole file and leaves the store untouched. Prints a JSON report of what was added and
@@ -24,12 +25,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)                        # market_data/ sits next to this file (PYTHONSAFEPATH-proof)
 
 from market_data import store_file                          # noqa: E402
-from market_data.adapters.symbol_index import SymbolIndex   # noqa: E402
 from market_data.importers import stooq                     # noqa: E402
 from market_data.importers.stooq import StooqFormatError    # noqa: E402
+from market_data.model import Isin                          # noqa: E402
 from market_data.store_file import StoreFileError           # noqa: E402
 
-SYMBOLS = Path(HERE) / "symbols.json"
 EXIT_REJECTED = 1                               # the export (or the store file) is not acceptable
 EXIT_USAGE = 2                                  # same code argparse uses for a bad command line
 
@@ -40,8 +40,8 @@ def main(argv=None, *, today: date | None = None) -> int:
                     help="this project's own candle store, one CSV per ISIN; created when missing")
     ap.add_argument("provider", choices=("stooq",), help="whose export the file is")
     ap.add_argument("export", type=Path, metavar="FILE", help="the export, a daily CSV")
-    ap.add_argument("--for", dest="key", required=True, metavar="TICKER",
-                    help="the instrument the export is for: broker ticker or ISIN, e.g. PEO.PL")
+    ap.add_argument("--for", dest="isin", required=True, metavar="ISIN",
+                    help="the instrument the export is for, by ISIN, e.g. PLPEKAO00016")
     args = ap.parse_args(argv)
 
     if "${" in args.store:
@@ -54,14 +54,15 @@ def main(argv=None, *, today: date | None = None) -> int:
         print(f"--store {args.store!r}: parent directory '{Path(args.store).parent}' does not "
               f"exist; was ${{CLAUDE_PROJECT_DIR}} substituted?", file=sys.stderr)
         return EXIT_USAGE
-    instrument = SymbolIndex(SYMBOLS).lookup(args.key)
-    if instrument.isin is None:
-        print(f"{args.key}: not in symbols.json, so no ISIN to name the store file by",
+    try:
+        isin = Isin.parse(args.isin)
+    except ValueError as e:                     # the message quotes the text as it was given
+        print(f"--for: {e}; a broker ticker is turned into an ISIN by symbols.py --from",
               file=sys.stderr)
         return EXIT_USAGE
     today = today or date.today()
     store = Path(args.store)
-    path = store / f"{instrument.isin}.csv"
+    path = store / f"{isin}.csv"
 
     try:
         rows = stooq.parse(args.export)
@@ -78,7 +79,7 @@ def main(argv=None, *, today: date | None = None) -> int:
     # A row in a daily export is a closed session, today's included.
     incoming = rows
 
-    report = {"isin": str(instrument.isin), "key": args.key, "file": str(path),
+    report = {"isin": str(isin), "file": str(path),
               "added": 0, "unchanged": 0, "changed": 0, "changed_dates": [],
               "imported": {"first": incoming[0].quote.session.isoformat() if incoming else None,
                            "last": incoming[-1].quote.session.isoformat() if incoming else None}}
