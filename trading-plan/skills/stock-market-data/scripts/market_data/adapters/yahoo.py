@@ -1,16 +1,14 @@
 """Yahoo Finance v8 chart as a QuoteSource. The only module that knows Yahoo's response format, its
-symbol suffixes, its range buckets and the on-disk cache of its daily series."""
+symbol suffixes and its range buckets. It keeps nothing on disk: there is no cache (ADR 0004)."""
 from __future__ import annotations
 
 import json
 import math
-import os
 import time
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from pathlib import Path
 
 from market_data.model import DailyBar, DateRange, Instrument, Price, Trust, Volume
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
@@ -31,14 +29,6 @@ def range_for_days(days):
         if span >= days:
             return label
     return "max"
-
-
-def range_days(label):
-    """Calendar-day span of a Yahoo range label (unknown / 'max' -> effectively unbounded)."""
-    for lbl, span in _RANGE_BUCKETS:
-        if lbl == label:
-            return span
-    return 10 ** 9
 
 
 def fetch_chart(yahoo, rng, tries=4):
@@ -164,8 +154,7 @@ def _trust(o: Price | None, h: Price | None, l: Price | None, c: Price | None,  
 
 
 def to_bar(row: dict) -> DailyBar:
-    """A row of build_daily (or of the cache, which holds the same rows, unjudged) as the port's
-    DailyBar, with Yahoo's judgement of it."""
+    """A row of build_daily as the port's DailyBar, with Yahoo's judgement of it."""
     v = row.get("v")
     sent = [row.get(k) for k in ("o", "h", "l", "c")]
     o, h, l, c = prices = [_price(x) for x in sent]  # noqa: E741
@@ -178,17 +167,15 @@ def to_bar(row: dict) -> DailyBar:
 
 class YahooQuotes:
     """QuoteSource over Yahoo's v8 chart endpoint. `fetch`, `sleep` and `now` are injectable so tests
-    run offline; cache_dir=None (the default) never touches the disk — the fail-safe: a forgotten
-    --cache means slower, never stale. Every bar it serves, live or from the cache, is judged by
-    to_bar: Yahoo's placeholder sessions come out untrusted."""
+    run offline. Every call fetches live; nothing is written to disk. Every bar it serves is judged
+    by to_bar: Yahoo's placeholder sessions come out untrusted."""
 
     name = SOURCE
     description = "Yahoo Finance v8 chart (~15 min delayed)"
 
-    def __init__(self, *, fetch=fetch_chart, cache_dir: Path | None = None,
-                 throttle: float = THROTTLE, sleep=time.sleep) -> None:
+    def __init__(self, *, fetch=fetch_chart, throttle: float = THROTTLE,
+                 sleep=time.sleep) -> None:
         self._fetch = fetch
-        self._cache_dir = cache_dir
         self._throttle = throttle
         self._sleep = sleep
 
@@ -206,56 +193,12 @@ class YahooQuotes:
         """Every daily bar of the smallest Yahoo range covering `period` (often more than asked).
         Any failure to answer, Yahoo's not_found included, raises QuoteSourceUnavailableError.
         Yahoo's ranges always end today, so only `period.days` picks the range: a period ending in
-        the past still gets the latest bars, not its own window. `period.end` is the cache key's day.
+        the past still gets the latest bars, not its own window. Bar completeness is decided per
+        market, from the venue's tz and session close (build_daily), not from `period.end`.
         The only caller (the CLI) passes a period ending today."""
         resolution = self.resolve(instrument)
-        bars, how = self._daily(resolution.symbol, range_for_days(period.days),
-                                period.end.isoformat(), now)
-        if bars is None:
-            raise QuoteSourceUnavailableError((SourceFailure(self.name, how),), (resolution,))
-        if how == "live":
-            self._sleep(self._throttle)                # throttle real fetches only
-        return QuoteSeries(tuple(to_bar(b) for b in bars), (resolution,))
-
-    def _daily(self, yahoo, rng, today, now):
-        """Daily bars for `yahoo` over range `rng`. Returns (bars, "live"|"cache") on success, or
-        (None, reason) if the fetch failed. `today` is the cache key's day (the caller's date) — bar
-        completeness is decided per market, from the venue's tz and session close, not from this.
-        Without a cache_dir it always fetches live. With one, a stored series is reused iff it was
-        saved the same day, on the same side of that venue's session close, AND its range covers
-        `rng`; otherwise refetch and rewrite. Closed candles are immutable, so there's no TTL — but
-        the day's *forming* bar is not a closed candle, so the entry also carries the session state it
-        was written in: crossing the close invalidates it, or a mid-session snapshot would later be
-        served as the day's closed candle. `complete` is never trusted from disk; a hit re-stamps it
-        against the current clock."""
-        use_cache = self._cache_dir is not None
-        path = (self._cache_dir / (yahoo.replace(os.sep, "_") + ".json")) if use_cache else None
-        if use_cache and path.exists():
-            try:
-                with open(path) as f:
-                    c = json.load(f)
-                off, end = c.get("gmtoffset", 0), c.get("session_end")
-                closed_now = (end or float("inf")) <= now
-                if (c.get("market_date") == today and c.get("session_over") == closed_now
-                        and range_days(c.get("range", "1mo")) >= range_days(rng)):
-                    # Same market day AND same side of the close: the session can't have moved on, so
-                    # the stored series is still the series. Crossing the close makes it stale — the
-                    # forming bar's OHLC keeps changing until then, and serving it as closed would
-                    # report a mid-session snapshot as the day's candle.
-                    return stamp_complete(c["daily"], market_today(off, now), closed_now), "cache"
-            except Exception:
-                pass                                    # unreadable cache -> fall through to live
-        r, reason = self._fetch(yahoo, rng)
+        r, reason = self._fetch(resolution.symbol, range_for_days(period.days))
         if r is None:
-            return None, reason
-        daily = build_daily(r, now=now)
-        if use_cache:
-            self._cache_dir.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_name(path.name + ".tmp")
-            with open(tmp, "w") as f:
-                end = session_end(r["meta"])
-                json.dump({"market_date": today, "range": rng, "gmtoffset": r["meta"].get("gmtoffset", 0),
-                           "session_end": end, "session_over": (end or float("inf")) <= now,
-                           "daily": daily}, f)
-            os.replace(tmp, path)                       # atomic write
-        return daily, "live"
+            raise QuoteSourceUnavailableError((SourceFailure(self.name, reason),), (resolution,))
+        self._sleep(self._throttle)                    # pause after each answered fetch
+        return QuoteSeries(tuple(to_bar(b) for b in build_daily(r, now=now)), (resolution,))

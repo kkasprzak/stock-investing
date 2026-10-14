@@ -17,7 +17,6 @@ depend on the output contract, not on which source answered.
 python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL ALE.PL PKO.PL ETFBM40TR.PL   # broker tickers, daily
 python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --interval w                 # weekly (W1); m = monthly
 python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --bars 10                    # more history per symbol
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --cache                      # reuse today's closed candles (skip the fetch)
 python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --atr                        # + Wilder ATR(14) on that interval (--atr 20 to override)
 python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PKN.PL --swings                     # + confirmed swing lows (2 sessions each side; --swings 3 to override)
 ```
@@ -33,12 +32,8 @@ provider-specific symbols. `--interval` picks the candle: `d` daily (default), `
 each over the period's trusted sessions), so they carry the same OHLCV and `complete`/`last_closed`
 semantics as daily, plus a `status` instead of a `source` (Output contract).
 
-`--cache` reuses the same market day's closed candles from a local cache instead of fetching; reach
-for it when a run re-reads closed candles, and omit it when the moment needs live data — your call
-from the context, not a fixed rule. Default is always-live. An entry is scoped to the session state it
-was written in: **crossing that venue's close invalidates it**, so a series cached mid-session is
-never served afterwards as the day's closed candle. Within an open session a cached forming bar can
-still be stale by construction — that bar is `complete:false`, so never decide on it.
+There is no cache: every run asks its sources afresh, and what is worth keeping lives in the own
+candle store.
 
 ## Instrument names (`scripts/symbols.py`)
 

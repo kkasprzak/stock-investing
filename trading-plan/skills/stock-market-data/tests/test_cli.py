@@ -1,6 +1,6 @@
 """quotes.py — the composition root (build_source) and the CLI (main) over an injected source.
 
-Offline, no mocks: build_source gets a temp cache directory and a fake fetch; main gets a fake
+Offline, no mocks: build_source gets a fake fetch and sleep; main gets a fake
 QuoteSource that records what it was asked and answers with fixed bars or a fixed failure.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ PERIOD = DateRange(date.fromisoformat(FROZEN_TODAY) - timedelta(days=300),
 
 
 class TestBuildSource(unittest.TestCase):
-    """The fail-safe: without --cache nothing touches the disk and every call goes live."""
+    """There is no cache (ADR 0004): every call goes live."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -46,21 +46,11 @@ class TestBuildSource(unittest.TestCase):
         self.calls.append((sym, rng))
         return load_yahoo("PKN"), None
 
-    def ask_twice(self, cache):
-        source = quotes.build_source(cache, cache_dir=self.tmp, fetch=self.fetch,
-                                     sleep=lambda s: None)
+    def test_asking_twice_fetches_twice(self):
+        source = quotes.build_source(fetch=self.fetch, sleep=lambda s: None)
         for _ in range(2):
             source.daily(PKN, PERIOD, now=FROZEN_NOW)
-
-    def test_without_cache_writes_nothing_and_always_fetches(self):
-        self.ask_twice(cache=False)
-        self.assertEqual(os.listdir(self.tmp), [])
         self.assertEqual(len(self.calls), 2)
-
-    def test_with_cache_writes_one_file_and_reuses_it(self):
-        self.ask_twice(cache=True)
-        self.assertEqual(os.listdir(self.tmp), ["PKN.WA.json"])
-        self.assertEqual(len(self.calls), 1)
 
     def test_with_a_store_the_store_is_asked_before_yahoo(self):
         """Order shows in behaviour: on a date both have, the store's bar is the one that comes."""
@@ -68,8 +58,7 @@ class TestBuildSource(unittest.TestCase):
         store_dir.mkdir()
         (store_dir / "PLPKN0000018.csv").write_text(
             "date,open,high,low,close,volume,source\n2026-07-24,1,1,1,1,7,stooq\n")
-        source = quotes.build_source(False, store_dir=store_dir, cache_dir=self.tmp / "cache",
-                                     fetch=self.fetch, sleep=lambda s: None)
+        source = quotes.build_source(store_dir=store_dir, fetch=self.fetch, sleep=lambda s: None)
         bars = source.daily(PKN_ISIN, PERIOD, now=FROZEN_NOW).bars
         self.assertEqual([(b.session, b.close, b.source) for b in bars[-2:]],
                          [(bars[-2].session, bars[-2].close, "yahoo"),
@@ -124,8 +113,8 @@ class TestMain(unittest.TestCase):
         store_dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, store_dir, True)
 
-        def build(cache, *, store_dir=None):
-            return quotes.build_source(cache, store_dir=store_dir,
+        def build(*, store_dir=None):
+            return quotes.build_source(store_dir=store_dir,
                                        fetch=lambda sym, rng: (load_yahoo("PKN"), None),
                                        sleep=lambda s: None)
 
@@ -338,7 +327,7 @@ class TestOutputPinnedAt040(unittest.TestCase):
     NEW_KEYS = {"trusted", "untrusted_reason", "status", "excluded_sessions"}
 
     def output(self, argv=ARGV):
-        source = quotes.build_source(False, fetch=lambda sym, rng: (load_yahoo("PKN"), None),
+        source = quotes.build_source(fetch=lambda sym, rng: (load_yahoo("PKN"), None),
                                      sleep=lambda s: None)
         return run(argv, source)
 
@@ -397,7 +386,7 @@ class TestOutputPinnedAt060(unittest.TestCase):
     ARGV = ["PKN.PL", "--atr", "--swings"]
 
     def test_header_and_records_match_0_6_0(self):
-        source = quotes.build_source(False, fetch=lambda sym, rng: (load_yahoo("PKN"), None),
+        source = quotes.build_source(fetch=lambda sym, rng: (load_yahoo("PKN"), None),
                                      sleep=lambda s: None)
         doc = run(self.ARGV, source)
         del doc["generated"]
@@ -442,8 +431,8 @@ class TestPlaceholderSessionsEndToEnd(unittest.TestCase):
     def output(self, *argv):
         response = self.yahoo_response()
 
-        def build(cache, *, store_dir=None):
-            return quotes.build_source(cache, store_dir=store_dir, cache_dir=self.tmp / "cache",
+        def build(*, store_dir=None):
+            return quotes.build_source(store_dir=store_dir,
                                        fetch=lambda sym, rng: (response, None),
                                        sleep=lambda s: None)
 
@@ -479,7 +468,7 @@ class TestCountFlags(unittest.TestCase):
     printed a negative ATR as settled, --atr 0 quietly printed none, and --swings -1 crashed."""
 
     def output(self, *argv):
-        source = quotes.build_source(False, fetch=lambda sym, rng: (load_yahoo("PKN"), None),
+        source = quotes.build_source(fetch=lambda sym, rng: (load_yahoo("PKN"), None),
                                      sleep=lambda s: None)
         return run(["PKN.PL", *argv], source)["quotes"]["PKN.PL"]
 
@@ -512,26 +501,31 @@ class TestCountFlags(unittest.TestCase):
 
 
 class TestFlagsReachTheCompositionRoot(unittest.TestCase):
-    """main() hands --cache and --store to build (the build_source seam) and nothing else does."""
+    """main() hands --store to build (the build_source seam) and nothing else does."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self.built = []                     # (cache, store_dir) per build call
+        self.built = []                     # store_dir per build call
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def build(self, cache, *, store_dir=None):
-        self.built.append((cache, store_dir))
+    def build(self, *, store_dir=None):
+        self.built.append(store_dir)
         return FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
 
     def test_store_dir_reaches_build(self):
         run(["--store", str(self.tmp), "PKN.PL"], build=self.build)
-        self.assertEqual(self.built, [(False, self.tmp)])
+        self.assertEqual(self.built, [self.tmp])
 
-    def test_cache_flag_reaches_build(self):
-        run(["--cache", "PKN.PL"], build=self.build)
-        self.assertEqual(self.built, [(True, None)])
+    def test_cache_flag_is_rejected_before_anything_runs(self):
+        """There is no cache (ADR 0004): a caller still passing --cache is told so, not ignored."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as exit_:
+            run(["--cache", "PKN.PL"], build=self.build)
+        self.assertEqual(exit_.exception.code, 2)
+        self.assertEqual(self.built, [])
+        self.assertIn("--cache", err.getvalue())
 
     def test_unsubstituted_variable_in_store_is_rejected_before_anything_runs(self):
         """A skill whose ${CLAUDE_PROJECT_DIR} was not expanded must not read as 'no store'."""
@@ -561,7 +555,7 @@ class TestFlagsReachTheCompositionRoot(unittest.TestCase):
     def test_missing_store_under_an_existing_parent_still_reaches_build(self):
         """The store directory itself missing is a project without a store yet, not a bad path."""
         run(["--store", str(self.tmp / "market-data"), "PKN.PL"], build=self.build)
-        self.assertEqual(self.built, [(False, self.tmp / "market-data")])
+        self.assertEqual(self.built, [self.tmp / "market-data"])
 
 
 if __name__ == "__main__":

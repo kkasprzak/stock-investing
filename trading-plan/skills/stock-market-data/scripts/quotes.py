@@ -18,7 +18,7 @@ its sources in trust order, each an adapter (market_data/adapters/store.py, then
 """
 from __future__ import annotations
 
-import sys, os, json, time, argparse, tempfile
+import sys, os, json, time, argparse
 from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
 
@@ -38,25 +38,17 @@ from market_data.ports import QuoteSource, QuoteSourceUnavailableError   # noqa:
 from market_data.quote_chain import QuoteChain              # noqa: E402
 
 SYMBOLS = Path(HERE) / "symbols.json"           # the shared symbol map (self-contained)
-# Opt-in on-disk cache of daily series, OUTSIDE the skill (keeps the distributable artifact pure).
-# Default: `.cache/stock-market-data` under the project that launched the skill (CLAUDE_PROJECT_DIR);
-# override with STOCK_MARKET_DATA_CACHE; fall back to the system temp dir when run outside a project.
-CACHE_DIR = Path(os.environ.get("STOCK_MARKET_DATA_CACHE")
-                 or (os.path.join(os.environ["CLAUDE_PROJECT_DIR"], ".cache", "stock-market-data")
-                     if os.environ.get("CLAUDE_PROJECT_DIR")
-                     else os.path.join(tempfile.gettempdir(), "stock-market-data")))
 DEFAULT_BARS = 6                                # bars returned per symbol
 MAX_PERIOD_DAYS = 365 * 50                      # beyond Yahoo's widest bucket ("max"); keeps timedelta sane
 MIN_PERIOD_DAYS = 9                             # the port's promise: an empty answer never means "weekend"
                                                 # (below Yahoo's smallest bucket, 1mo, so no fetch changes)
 
 
-def build_source(cache: bool, *, store_dir: Path | None = None, cache_dir: Path = CACHE_DIR,
-                 fetch=fetch_chart, sleep=time.sleep) -> QuoteSource:
+def build_source(*, store_dir: Path | None = None, fetch=fetch_chart,
+                 sleep=time.sleep) -> QuoteSource:
     """The composition root: which sources answer, in which order. `fetch` and `sleep` are injectable
-    so tests run offline and unthrottled."""
-    # no --cache = no cache: fail-safe (a forgotten flag means slower, never stale)
-    yahoo_source = YahooQuotes(fetch=fetch, cache_dir=cache_dir if cache else None, sleep=sleep)
+    so tests run offline and unthrottled. Nothing here writes to disk: there is no cache (ADR 0004)."""
+    yahoo_source = YahooQuotes(fetch=fetch, sleep=sleep)
     # Order on this list = trust hierarchy (ADR 0000, docs/adr/0000-own-candle-store-is-the-most-
     # trusted-source-of-market-data.md): the own candle store first, Yahoo patches what it lacks.
     store = [StoreQuotes(store_dir)] if store_dir is not None else []
@@ -213,9 +205,6 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
                     help=f"also report confirmed swing lows on the chosen interval, N sessions each "
                          f"side (bare --swings = {SWING_SESSIONS_DEFAULT}); reads the same window as "
                          f"ATR, so both describe one stretch of history")
-    ap.add_argument("--cache", action="store_true",
-                    help="reuse the same market day's closed candles from an on-disk cache; omit when "
-                         "the moment needs live data")
     ap.add_argument("--store", type=_store_dir, default=None, metavar="DIR",
                     help="this project's own candle store, one CSV per ISIN; asked before Yahoo")
     args = ap.parse_args(argv)
@@ -229,7 +218,7 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
                MAX_PERIOD_DAYS)
     period = DateRange(end - timedelta(days=days), end)
     if source is None:
-        source = build(args.cache, store_dir=args.store)
+        source = build(store_dir=args.store)
     quotes = {}
     for tk in args.tickers:
         instrument = index.lookup(tk)

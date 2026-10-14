@@ -1,4 +1,4 @@
-"""market_data.adapters.yahoo — YahooQuotes: resolve, range buckets, cache, session close, backfill.
+"""market_data.adapters.yahoo — YahooQuotes: resolve, range buckets, session close, backfill.
 
 Offline: Yahoo responses are fixtures (fixtures/yahoo_*.json) or hand-built dicts, served through an
 injected fetch; the clock is an injected epoch; throttling goes to an injected sleep. Opt-in live
@@ -8,19 +8,16 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import tempfile
 import unittest
 from datetime import date, timedelta
-from pathlib import Path
 
 from support import FX, FROZEN_TODAY, FROZEN_NOW, GPW_CLOSE, num, price, warsaw, load_yahoo
 import quotes
 from market_data.adapters import yahoo
 from market_data.adapters.symbol_index import SymbolIndex
-from market_data.adapters.yahoo import YahooQuotes, range_days, range_for_days
+from market_data.adapters.yahoo import YahooQuotes, range_for_days
 from market_data.indicators import LastClosed, calendar_days, last_closed
-from market_data.model import DailyBar, DateRange, Instrument, Quality, Trust, Volume
+from market_data.model import DailyBar, DateRange, Quality, Trust, Volume
 from market_data.ports import QuoteSourceUnavailableError, Resolution, ResolvedBy, SourceFailure
 
 INDEX = SymbolIndex(quotes.SYMBOLS)
@@ -28,13 +25,13 @@ PKN = INDEX.lookup("PKN.PL")                    # mapped: yahoo PKN.WA via symbo
 
 
 def period(days, end=FROZEN_TODAY):
-    """A DateRange of `days` calendar days ending on `end` (the cache key's day)."""
+    """A DateRange of `days` calendar days ending on `end`."""
     end = date.fromisoformat(end)
     return DateRange(end - timedelta(days=days), end)
 
 
 # Days that land in the same Yahoo bucket as the labels the pre-adapter tests passed directly.
-ONE_MONTH, ONE_YEAR, TWO_YEARS = 20, 300, 500   # "1mo" <= 31, "1y" 184-365, "2y" 366-730
+ONE_MONTH, ONE_YEAR = 20, 300                   # "1mo" <= 31, "1y" 184-365
 
 
 def no_sleep(_seconds):
@@ -98,74 +95,6 @@ class TestRangeFor(unittest.TestCase):
             for bars in (1, 6, 40, 100, 252, 400):
                 self.assertGreaterEqual(span[self.range_for(iv, bars)], bars * factor[iv])
 
-    def test_range_days_reads_a_cached_label_back(self):   # the cache compares stored vs wanted range
-        self.assertEqual((range_days("1mo"), range_days("1y"), range_days("10y")), (31, 365, 3650))
-        self.assertEqual((range_days("max"), range_days("bogus")), (10 ** 9, 10 ** 9))
-
-
-class TestCache(unittest.TestCase):
-    """#3 — opt-in, model-decided cache. With a cache_dir, a same-market-day closed-candle series is
-    reused, keyed by the caller's date (period.end) so a new day invalidates it. Fetch is injected (offline) and
-    counts its calls: a call is a live fetch, no call is a cache hit."""
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
-        self.raw = load_yahoo("PKN")
-        self.calls = []
-        def fake_fetch(sym, rng):
-            self.calls.append((sym, rng)); return self.raw, None
-        self.source = YahooQuotes(fetch=fake_fetch, cache_dir=self.tmp, throttle=0, sleep=no_sleep)
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def daily(self, days, end=FROZEN_TODAY):
-        return self.source.daily(PKN, period(days, end), now=FROZEN_NOW)
-
-    def test_opt_in_miss_then_hit_same_day(self):
-        self.daily(ONE_YEAR)
-        self.daily(ONE_YEAR)
-        self.assertEqual(self.calls, [("PKN.WA", "1y")])
-
-    def test_new_market_day_refetches(self):
-        self.daily(ONE_YEAR, "2026-07-24")
-        self.daily(ONE_YEAR, "2026-07-27")
-        self.assertEqual(len(self.calls), 2)
-
-    def test_bigger_range_same_day_refetches(self):               # cached history too short
-        self.daily(ONE_MONTH)
-        self.daily(TWO_YEARS)
-        self.assertEqual(self.calls, [("PKN.WA", "1mo"), ("PKN.WA", "2y")])
-
-    def test_smaller_range_same_day_hits(self):                   # cached history covers it
-        self.daily(TWO_YEARS)
-        self.daily(ONE_MONTH)
-        self.assertEqual(self.calls, [("PKN.WA", "2y")])
-
-    def test_live_and_cache_return_identical_bars(self):
-        b1 = self.daily(ONE_YEAR).bars
-        b2 = self.daily(ONE_YEAR).bars
-        self.assertEqual(len(self.calls), 1)
-        self.assertEqual(b1, b2)
-
-    def test_entry_written_without_source_comes_back_with_it(self):
-        """Stored bars never carry `source` (the adapter labels them after writing, and entries from
-        before the adapter look the same); a hit must come out labelled like a live answer."""
-        daily = yahoo.build_daily(self.raw, now=FROZEN_NOW)
-        self.assertNotIn("source", daily[-1])
-        with open(self.tmp / "PKN.WA.json", "w") as f:
-            json.dump({"market_date": FROZEN_TODAY, "range": "2y", "gmtoffset": 7200,
-                       "session_end": None, "session_over": False, "daily": daily}, f)
-        bars = self.daily(ONE_YEAR).bars
-        self.assertEqual(self.calls, [])                          # a hit, not a refetch
-        self.assertEqual({b.source for b in bars}, {"yahoo"})
-
-    def test_symbol_with_path_separator_is_flattened_into_one_file(self):
-        """A vendor symbol containing os.sep must not escape into a subdirectory of the cache."""
-        odd = Instrument(key="A/B", isin=None, symbols={"yahoo": "A" + os.sep + "B"})
-        self.source.daily(odd, period(ONE_YEAR), now=FROZEN_NOW)
-        self.assertEqual(os.listdir(self.tmp), ["A_B.json"])
-
 
 class TestDaily(unittest.TestCase):
     """The port contract as Yahoo keeps it: bars labelled with their source, a failure to answer
@@ -175,8 +104,8 @@ class TestDaily(unittest.TestCase):
     def setUp(self):
         self.sleeps = []
 
-    def source(self, fetch, cache_dir=None):
-        return YahooQuotes(fetch=fetch, cache_dir=cache_dir, throttle=0, sleep=self.sleeps.append)
+    def source(self, fetch):
+        return YahooQuotes(fetch=fetch, throttle=0, sleep=self.sleeps.append)
 
     def test_every_bar_carries_source(self):
         s = self.source(lambda sym, rng: (load_yahoo("PKN"), None)).daily(
@@ -209,17 +138,6 @@ class TestDaily(unittest.TestCase):
         self.source(lambda sym, rng: (load_yahoo("PKN"), None)).daily(
             PKN, period(ONE_YEAR), now=FROZEN_NOW)
         self.assertEqual(len(self.sleeps), 1)
-
-    def test_does_not_sleep_after_a_cache_hit(self):
-        tmp = Path(tempfile.mkdtemp())
-        try:
-            src = self.source(lambda sym, rng: (load_yahoo("PKN"), None), cache_dir=tmp)
-            src.daily(PKN, period(ONE_YEAR), now=FROZEN_NOW)          # live: writes the entry
-            self.sleeps.clear()
-            src.daily(PKN, period(ONE_YEAR), now=FROZEN_NOW)          # hit
-            self.assertEqual(self.sleeps, [])
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
 
     def test_does_not_sleep_after_a_failure(self):
         with self.assertRaises(QuoteSourceUnavailableError):
@@ -285,77 +203,6 @@ class TestSessionClose(unittest.TestCase):
         self.assertEqual(last_closed([yahoo.to_bar(r) for r in rows]),
                          LastClosed(self.DAY, price("144.84"), Quality.GOOD))
 
-    def _cached(self, write_at, read_at, midday, final):
-        """Write the cache at `write_at` from `midday`, read it at `read_at` (live would give `final`).
-        Returns (bars, "live"|"cache") from the second call; "live" iff it reached the fetch."""
-        tmp = Path(tempfile.mkdtemp())
-        day = period(ONE_MONTH, "2026-07-28")
-        try:
-            YahooQuotes(fetch=lambda y, r: (midday, None), cache_dir=tmp, throttle=0,
-                        sleep=no_sleep).daily(PKN, day, now=write_at)
-            calls = []
-            def fetch(y, r):
-                calls.append(y); return final, None
-            s = YahooQuotes(fetch=fetch, cache_dir=tmp, throttle=0,
-                            sleep=no_sleep).daily(PKN, day, now=read_at)
-            return list(s.bars), ("live" if calls else "cache")
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-
-    def test_midsession_cache_is_not_reused_after_the_close(self):
-        """The forming bar's OHLC keeps moving until the close, so a series cached mid-session is
-        stale the moment the session ends — reusing it would report a midday snapshot as the day's
-        closed candle (the dangerous direction: a wrong number dressed as a fact)."""
-        close = warsaw(2026, 7, 28, GPW_CLOSE)
-        midday, final = self.raw(close, price=147.2), self.raw(close, price=144.84)
-        bars, src = self._cached(warsaw(2026, 7, 28, 12 * 3600), warsaw(2026, 7, 28, 23 * 3600),
-                                 midday, final)
-        self.assertEqual(src, "live")                       # crossing the close invalidates
-        self.assertEqual(num(bars[-1].close), 144.84)       # the real close, not the snapshot
-        self.assertTrue(bars[-1].complete)
-
-    def test_cache_written_after_the_close_is_reused(self):
-        """Same side of the close: the candle is final, so the entry stays good (that's the point of
-        --cache — an evening re-read must not refetch)."""
-        close = warsaw(2026, 7, 28, GPW_CLOSE)
-        final, other = self.raw(close, price=144.84), self.raw(close, price=999.0)
-        bars, src = self._cached(warsaw(2026, 7, 28, 18 * 3600), warsaw(2026, 7, 28, 23 * 3600),
-                                 final, other)
-        self.assertEqual(src, "cache")
-        self.assertEqual(num(bars[-1].close), 144.84)
-        self.assertTrue(bars[-1].complete)
-
-    def test_midsession_cache_is_reused_within_the_session(self):
-        """Two mid-session reads still hit: --cache means 'reuse the day's candles', and the forming
-        bar must be dropped by the caller anyway — its flag stays false."""
-        close = warsaw(2026, 7, 28, GPW_CLOSE)
-        midday = self.raw(close, price=147.2)
-        bars, src = self._cached(warsaw(2026, 7, 28, 11 * 3600), warsaw(2026, 7, 28, 12 * 3600),
-                                 midday, self.raw(close, price=148.0))
-        self.assertEqual(src, "cache")
-        self.assertFalse(bars[-1].complete)
-
-    def test_preopen_cache_is_not_reused_after_the_close(self):
-        """Written before the open (no bar for today yet) -> after the close it must refetch, or the
-        evening run would see yesterday's candle as the newest one."""
-        close = warsaw(2026, 7, 28, GPW_CLOSE)
-        _, src = self._cached(warsaw(2026, 7, 28, 7 * 3600), warsaw(2026, 7, 28, 23 * 3600),
-                              self.raw(close, price=151.0), self.raw(close, price=144.84))
-        self.assertEqual(src, "live")
-
-    def test_cache_hit_restamps_complete_against_the_read_clock(self):
-        """`complete` is never trusted from disk. With no trading period from the vendor, an evening
-        write stores the day's bar as forming (conservative); read back after the market's midnight
-        by a caller whose own date is still 07-28, the entry is a hit, and that bar is now a past
-        market date, so the hit must report it closed."""
-        write_at, read_at = warsaw(2026, 7, 28, 23 * 3600), warsaw(2026, 7, 29, 1 * 3600)
-        self.assertFalse(yahoo.build_daily(self.raw(None), now=write_at)[-1]["complete"])
-        bars, src = self._cached(write_at, read_at, self.raw(None), self.raw(None, price=999.0))
-        self.assertEqual(src, "cache")
-        self.assertEqual(bars[-1].session, self.DAY)
-        self.assertEqual(num(bars[-1].close), 144.84)
-        self.assertTrue(bars[-1].complete)
-
 
 class TestBuildDailyBackfill(unittest.TestCase):
     def test_trailing_null_close_backfilled_from_regularmarketprice(self):
@@ -375,7 +222,7 @@ class TestBuildDailyBackfill(unittest.TestCase):
 
 
 class TestToBar(unittest.TestCase):
-    """A row of build_daily (or of the cache) as the port's DailyBar. Whatever Yahoo sends, this
+    """A row of build_daily as the port's DailyBar. Whatever Yahoo sends, this
     must not raise: an exception out of an adapter is a bug, not an answer."""
 
     ROW = {"date": "2026-07-24", "o": 155.7, "h": 156.3, "l": 153.42, "c": 156.0, "v": 1516341,
@@ -493,21 +340,6 @@ class TestPlaceholder(unittest.TestCase):
         s = YahooQuotes(fetch=lambda sym, rng: (self.response(rows), None), throttle=0,
                         sleep=no_sleep).daily(PKN, period(ONE_MONTH), now=FROZEN_NOW)
         self.assertEqual([b.trust for b in s.bars], [PLACEHOLDER] * 5 + [Trust.TRUSTED])
-
-    def test_a_cache_hit_is_judged_as_well(self):
-        """The cache holds Yahoo's rows as they came, with no judgement in them; a hit gets one."""
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, True)
-        rows = [self.flat(date="2026-07-23"), dict(self.ROW)]
-        self.assertNotIn("trust", rows[0])
-        with open(tmp / "PKN.WA.json", "w") as f:
-            json.dump({"market_date": FROZEN_TODAY, "range": "1y", "gmtoffset": 7200,
-                       "session_end": None, "session_over": False, "daily": rows}, f)
-        calls = []
-        s = YahooQuotes(fetch=lambda sym, rng: calls.append(sym), cache_dir=tmp, throttle=0,
-                        sleep=no_sleep).daily(PKN, period(ONE_MONTH), now=FROZEN_NOW)
-        self.assertEqual(calls, [])                               # a hit
-        self.assertEqual([b.trust for b in s.bars], [PLACEHOLDER, Trust.TRUSTED])
 
 
 @unittest.skipUnless(os.environ.get("RUN_LIVE_SMOKE"), "set RUN_LIVE_SMOKE=1 to hit live Yahoo")

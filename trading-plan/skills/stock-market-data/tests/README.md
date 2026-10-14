@@ -32,7 +32,7 @@ test_indicators.py      market_data/indicators.py — aggregate, last_closed, AT
                         fields and the counts they refuse), the quality every reading carries,
                         placeholder sessions (ADR 0002), Stooq oracle
 test_quote_chain.py     market_data/quote_chain.py — QuoteChain: trust order, gap filling, sources that did not answer
-test_yahoo.py           market_data/adapters/yahoo.py — resolve, range buckets, cache, session close, backfill,
+test_yahoo.py           market_data/adapters/yahoo.py — resolve, range buckets, session close, backfill,
                         to_bar (row to DailyBar, an unusable price to a gap on an untrusted bar), the
                         placeholder rule, live smoke
 test_symbol_index.py    market_data/adapters/symbol_index.py — lookup by ISIN / broker ticker, broker symbol,
@@ -95,9 +95,9 @@ class implementing the `QuoteSource` port — `support.FakeSource` (one fixed an
 error, recording what it was asked; used by `test_cli.py` and `test_store.py`), and `ChainFake`,
 local to `test_quote_chain.py`, for the chain's own cases. The Yahoo adapter takes its `fetch` and
 `sleep` as constructor arguments, so `test_yahoo.py` hands it fixtures and a no-op or recording
-sleep. `quotes.main(argv, source=, build=, today=)` and `build_source(cache, store_dir=...,
-cache_dir=..., fetch=..., sleep=...)` take the same injections, so the CLI is tested without the
-network and without touching the real cache. The store is a directory on disk: the
+sleep. `quotes.main(argv, source=, build=, today=)` and `build_source(store_dir=..., fetch=...,
+sleep=...)` take the same injections, so the CLI is tested without the network. The store is a
+directory on disk: the
 `fixtures/store/` directory, or a temp one; `import_quotes.main(argv, today=)` takes the date, so
 "no session after today" does not follow the clock.
 
@@ -126,10 +126,8 @@ values; the tests re-assert them on every run.
   just-closed week complete on a Saturday).
 - **Session close** (`TestSessionClose`) — the flag follows the venue's session, not the date: today's
   bar forming during the session, complete after the close and all evening, conservative when the
-  vendor omits the trading period, market tz beating machine tz. On the cache side: an entry written
-  before the close is refetched after it, one written after the close is reused, and a hit is
-  re-stamped against the read clock (an evening entry whose bar was stored as forming comes back
-  closed once the market's date has moved on). Weekly/monthly counterparts live in `TestAggregate`.
+  vendor omits the trading period, market tz beating machine tz. Weekly/monthly counterparts live in
+  `TestAggregate`.
 - **ATR** (`TestATR`) — the number two risk skills must agree on, pinned from three sides: arithmetic
   hand-computable at `n=2` (including the `|prevC - L|` branch), independence from `--bars` in both
   directions (a short slice cannot starve it, a wide fetch cannot shift it), and a regression golden at
@@ -140,7 +138,7 @@ values; the tests re-assert them on every run.
   is not; `TestDaily`: Yahoo labels every bar with its `source` and raises when it did not answer.
 - **Trust** — each source judges its own sessions. `TestPlaceholder` (`test_yahoo.py`): a bar with
   `o == h == l == c` and volume 0 or missing is untrusted `"placeholder"`, judged alone (the first
-  bar of an answer too, five in a row all of them), forming bars and cache hits included; a flat bar
+  bar of an answer too, five in a row all of them), forming bars included; a flat bar
   with volume, a bar with a range and no volume, and a bar with a missing price stay trusted.
   `TestToBar`: an open, high, low or close Yahoo sent that is no price (0, negative, not finite)
   becomes `null` and makes the bar untrusted `"unusable_price"`, which also wins over `"placeholder"`
@@ -184,13 +182,13 @@ values; the tests re-assert them on every run.
   one that cannot be created (both skipped as root). Exit 2: a missing `--store`, an unknown
   ticker, a literal `${` in `--store`, a `--store` whose parent directory does not exist (nothing
   created).
-- **CLI** (`test_cli.py`) — `build_source` without a cache writes nothing, with one writes one
-  file, with a store asks it before Yahoo; the `ok:true` / `ok:false` records (one `ok:false` path
+- **CLI** (`test_cli.py`) — `build_source` fetches on every call (there is no cache), and with a
+  store asks it before Yahoo; the `ok:true` / `ok:false` records (one `ok:false` path
   for a failed chain and for no bars while a source did not answer), the header naming every
   source in trust order, and `--bars` edge values that must not crash.
-  `TestFlagsReachTheCompositionRoot`: `--store` and `--cache` reach `build_source` through `main()`,
-  and a literal `${` in `--store`, or a `--store` whose parent directory does not exist, exits 2
-  before anything is built; a missing store directory under an existing parent still reaches it.
+  `TestFlagsReachTheCompositionRoot`: `--store` reaches `build_source` through `main()`, and
+  `--cache`, a literal `${` in `--store`, or a `--store` whose parent directory does not exist,
+  exits 2 before anything is built; a missing store directory under an existing parent still reaches it.
   `to_json`: a daily bar prints `trusted` and, only when false, `untrusted_reason`; a W1/MN bar and
   every reading print `status` and `excluded_sessions`. `TestOutputPinnedAt040`: without a store the
   output is `fixtures/cli_0_4_0_PKN.json` plus only the keys named in `NEW_KEYS`, in the same order
