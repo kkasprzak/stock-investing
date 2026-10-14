@@ -70,9 +70,7 @@ offered: it belongs to that vendor's adapter.
 ## Own candle store (required per project)
 
 The store is this project's own record of closed daily candles, one CSV file per ISIN, filled only
-by import and asked before Yahoo, which only fills what the store lacks
-([ADR 0000](https://github.com/kkasprzak/stock-investing/blob/main/docs/adr/0000-own-candle-store-is-the-most-trusted-source-of-market-data.md),
-[ADR 0001](https://github.com/kkasprzak/stock-investing/blob/main/docs/adr/0001-candle-store-is-one-csv-file-per-isin-versioned-in-the-consumers-repository.md)).
+by import and asked before Yahoo, which only fills what the store lacks.
 
 - **Every project that uses this skill has its own store**, under `data/market-data/` in that
   project's repository. There is no global store. The `Run` lines point at it.
@@ -129,8 +127,7 @@ untrusted bar is shown as the source gave it, never repaired.
 A weekly or monthly bar is `{date, o, h, l, c, v, complete, status, excluded_sessions}`, with no
 `source`.
 
-**Derived values** — W1/MN bars, `last_closed`, `atr`, `swing_lows` — follow one rule
-([ADR 0002](https://github.com/kkasprzak/stock-investing/blob/main/docs/adr/0002-derived-values-are-computed-only-from-trusted-sessions-and-carry-a-status.md)):
+**Derived values** — W1/MN bars, `last_closed`, `atr`, `swing_lows` — follow one rule:
 a value is computed from trusted sessions only and names the ones it had to leave out; how much
 left out is too much is the consumer's call. Each carries both keys, always:
 
