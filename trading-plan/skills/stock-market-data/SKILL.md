@@ -1,6 +1,6 @@
 ---
 name: stock-market-data
-description: Fetch fresh delayed daily / weekly / monthly (D1 / W1 / MN) OHLC candles, last closing prices, and Wilder ATR (average true range) for named stock-market instruments (GPW / XETRA / US), keyed by broker ticker via a shared ISIN-backed symbol map. Use whenever a task needs current or recent market prices, closes, or candles for specific tickers — a morning runaway check, a daily-close D1 evaluation, a weekly D1/W1/MN portfolio or watchlist review, or any ad-hoc "what did X close at" lookup. Also the one place ATR and confirmed swing lows are computed: reach for it for an instrument's ATR, its normal daily range, how volatile it is, a stop distance expressed in ATR multiples, or the swing lows a trailing stop is anchored to — never derive either from candles yourself, or two callers will disagree on the same number. The market-data-acquisition layer; returns facts, not decisions.
+description: Fetch fresh delayed daily / weekly / monthly (D1 / W1 / MN) OHLC candles, last closing prices, and Wilder ATR (average true range) for named stock-market instruments (GPW / XETRA / US), keyed by broker ticker via a shared ISIN-backed symbol map. Use whenever a task needs current or recent market prices, closes, or candles for specific tickers — a morning runaway check, a daily-close D1 evaluation, a weekly D1/W1/MN portfolio or watchlist review, or any ad-hoc "what did X close at" lookup. Also the one place ATR and confirmed swing lows are computed: reach for it for an instrument's ATR, its normal daily range, how volatile it is, a stop distance expressed in ATR multiples, or the swing lows a trailing stop is anchored to — never derive either from candles yourself, or two callers will disagree on the same number. The market-data-acquisition layer; returns facts, not decisions. Also translates a broker's ticker to an ISIN and back — reach for it for "which ISIN is PKN.PL" or "what is this ISIN's ticker at the broker", never translate by hand.
 user-invocable: false
 ---
 
@@ -39,6 +39,33 @@ from the context, not a fixed rule. Default is always-live. An entry is scoped t
 was written in: **crossing that venue's close invalidates it**, so a series cached mid-session is
 never served afterwards as the day's closed candle. Within an open session a cached forming bar can
 still be stale by construction — that bar is `complete:false`, so never decide on it.
+
+## Instrument names (`scripts/symbols.py`)
+
+Translates between an ISIN and the ticker a broker uses for it, on the same symbol map. Reach for it
+when a flow holds one and needs the other: a state file row in broker tickers that should be asked
+for by ISIN, or an ISIN (from index-membership sourcing, from the store) that has to be written down
+as the broker's ticker. Never translate by hand, and never derive a ticker from a root or a suffix.
+The direction is always named:
+
+```
+python3 ${CLAUDE_SKILL_DIR}/scripts/symbols.py --from xtb PKN.PL ALE.PL    # broker tickers -> ISINs
+python3 ${CLAUDE_SKILL_DIR}/scripts/symbols.py --to xtb PLPKN0000018       # ISINs -> broker tickers
+```
+
+JSON on stdout, one record per key under the text you passed; `found` is always there.
+
+- `--from xtb`: `{"found": true, "isin": "PLPKN0000018", "name": "PKNORLEN"}`, or `{"found": false}`
+  for a ticker the map does not know.
+- `--to xtb`: `{"found": true, "xtb": "PKN.PL", "name": "PKNORLEN"}`. `"xtb": null` with
+  `found: true` means the instrument is mapped but the broker does not offer it (ROBYG, REX): it
+  cannot be traded there, so do not look for another ticker. `{"found": false}` is a valid ISIN
+  outside the map; `{"found": false, "reason": "invalid_isin"}` is text that is no ISIN (checked
+  as given: lower case or surrounding spaces are invalid, not corrected).
+
+Namespaces are brokers' and exchanges' only, today `xtb`. A data vendor's symbol (`yahoo`) is not
+offered: it belongs to that vendor's adapter.
+`--from yahoo`, `--to yahoo` or an unknown namespace exits 2. Nothing is fetched.
 
 ## Own candle store (required per project)
 
@@ -208,7 +235,9 @@ there, else the first one's. A source that answered with nothing is not a failur
 
 The single shared symbol map for every quote script, self-contained. Keyed by **ISIN** (durable
 across renames); each entry's `symbols` maps a source name (`xtb`, `yahoo`, …) to that source's
-ticker. Runtime resolves an input `xtb` ticker → entry → `symbols.yahoo`.
+ticker. Runtime resolves an input `xtb` ticker → entry → `symbols.yahoo`. `symbols.py` reads the
+same map; a symbol given to two ISINs within one namespace is a map error, and every script that
+reads the map refuses to start on it.
 
 Upkeep:
 - **Add a watched instrument** — one entry: its ISIN → `{name, symbols:{xtb, yahoo}}`. Verify the

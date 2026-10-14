@@ -144,6 +144,7 @@
     "PLBMECH00012": {"name": "BUMECH", "symbols": {"xtb": "BMC.PL", "yahoo": "BMC.WA"}},
     "PLBMDLB00018": {"name": "SNTVERSE", "symbols": {"xtb": "SVE.PL", "yahoo": "SVE.WA"}},
     "PLWTCHN00030": {"name": "WITTCHEN", "symbols": {"xtb": "WTN.PL", "yahoo": "WTN.WA"}},
-    "PLZBMZC00019": {"name": "ZREMB", "symbols": {"xtb": "ZRE.PL", "yahoo": "ZRE.WA"}}
+    "PLZBMZC00019": {"name": "ZREMB", "symbols": {"xtb": "ZRE.PL", "yahoo": "ZRE.WA"}},
+    "US84615Q1031": {"name": "SpaceX", "symbols": {"xtb": "SPCX.US", "yahoo": "SPCX"}}
   }
 }

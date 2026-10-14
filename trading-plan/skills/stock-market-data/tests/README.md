@@ -1,8 +1,8 @@
 # Tests — stock-market-data
 
 Deterministic, offline regression tests for `scripts/quotes.py` (read side), `scripts/import_quotes.py`
-(write side, the own candle store) and the `scripts/market_data/` package behind both. Stdlib
-`unittest`, no dependencies.
+(write side, the own candle store), `scripts/symbols.py` (instrument names) and the
+`scripts/market_data/` package behind them. Stdlib `unittest`, no dependencies.
 
 ```
 make test                                                                          # from the repo root, every skill's tests
@@ -35,7 +35,12 @@ test_quote_chain.py     market_data/quote_chain.py — QuoteChain: trust order, 
 test_yahoo.py           market_data/adapters/yahoo.py — resolve, range buckets, cache, session close, backfill,
                         to_bar (row to DailyBar, an unusable price to a gap on an untrusted bar), the
                         placeholder rule, live smoke
-test_symbol_index.py    market_data/adapters/symbol_index.py — lookup by ISIN / broker ticker, broker symbol
+test_symbol_index.py    market_data/adapters/symbol_index.py — lookup by ISIN / broker ticker, broker symbol,
+                        find (a namespace's symbol back to its ISIN), name, every map entry indexed,
+                        a bad ISIN or a symbol twice in one namespace fails construction
+test_symbols.py         scripts/symbols.py — --from xtb and --to xtb, found / not found, a mapped ISIN
+                        the broker does not offer (xtb null), invalid_isin, mixed keys in one call,
+                        yahoo or an unknown namespace exits 2
 test_cli.py             scripts/quotes.py — build_source (the composition root), main() over an injected source,
                         flags reaching build, --atr/--swings counts below 1 rejected, to_json, the 0.4.0
                         and 0.6.0 output pins, placeholder sessions end to end
@@ -194,6 +199,11 @@ values; the tests re-assert them on every run.
   `fixtures/cli_0_6_0_PKN.json` byte for byte. `TestPlaceholderSessionsEndToEnd`: store bars
   trusted, Yahoo placeholders marked, ATR and `last_closed` as of the last real session and
   `uncertain` with the gap's dates, the week of placeholders `no_value`.
+- **Names** (`test_symbols.py`) — `main()` with its output parsed: a ticker or an ISIN the map does
+  not know is `found:false`, never guessed; a mapped ISIN the broker does not offer is `found:true`
+  with `xtb:null`; text that is no ISIN (check digit, lower case, a space, a ticker) is
+  `invalid_isin` for that key only; the CCC rename guard; `--from yahoo`, `--to yahoo`, an unknown
+  namespace, no direction or both exit 2 with nothing on stdout.
 - **Live smoke** (opt-in, `RUN_LIVE_SMOKE=1`) — hits Yahoo to catch API/shape drift the fixtures
   can't see until re-captured.
 
