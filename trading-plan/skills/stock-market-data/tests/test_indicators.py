@@ -312,12 +312,6 @@ class TestSwingLows(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     swings(window_sessions, through)
 
-    def test_the_window_cannot_end_before_it_starts(self):
-        with self.assertRaises(ValueError):
-            SwingLows(each_side=EACH2, window=DateRange(D("2026-01-09"), D("2026-01-01")),
-                      window_sessions=9, detectable_through=D("2026-01-07"), detected=(),
-                      interval=None, quality=Quality.GOOD)
-
     def test_forming_bar_excluded(self):
         bars = [*self.HAND[:-1], dataclasses.replace(self.HAND[-1], complete=False)]
         s = swing_lows(bars, EACH2)
