@@ -614,28 +614,34 @@ class TestStooqOracle(unittest.TestCase):
     CASES = [("PKN", ("d", "w", "m")), ("KGH", ("d", "w", "m")), ("LPP", ("d", "w", "m"))]
     WINDOW = {"d": "2026-07-03", "w": "2026-06-01", "m": "2026-04-01"}   # inclusive lower bound
 
-    def test_ohlc_against_stooq(self):
+    def assertNear(self, ours, expected):
+        self.assertAlmostEqual(num(ours), expected, delta=TOL(expected))
+
+    def test_ohlc_matches_stooq_on_every_clean_period(self):
         for ticker, intervals in self.CASES:
             for iv in intervals:
                 ours = {label(b): b for b in pipeline(ticker, iv)}
                 stq = load_stooq(ticker, iv)
-                lo = self.WINDOW[iv]
-                overlap = sorted(k for k in set(ours) & set(stq) if k >= lo)
+                overlap = sorted(k for k in set(ours) & set(stq)
+                                 if k >= self.WINDOW[iv] and (ticker, iv, k) not in DIVIDEND_WEEKS)
                 self.assertGreaterEqual(len(overlap), 3, f"{ticker}/{iv}: too few overlapping periods")
                 for k in overlap:
                     o, s = ours[k], stq[k]
-                    div_open = DIVIDEND_WEEKS.get((ticker, iv, k))
                     with self.subTest(ticker=ticker, interval=iv, period=k):
-                        # Low & Close always match the independent source
-                        self.assertAlmostEqual(num(o.low), s["l"], delta=TOL(s["l"]))
-                        self.assertAlmostEqual(num(o.close), s["c"], delta=TOL(s["c"]))
-                        if div_open is None:
-                            self.assertAlmostEqual(num(o.open), s["o"], delta=TOL(s["o"]))
-                            self.assertAlmostEqual(num(o.high), s["h"], delta=TOL(s["h"]))
-                        else:
-                            # ex-div week: we report actual-traded open, Stooq back-adjusts it lower
-                            self.assertAlmostEqual(num(o.open), div_open, delta=TOL(div_open))
-                            self.assertGreater(num(o.open), s["o"])
+                        for col, ours_col in (("o", o.open), ("h", o.high), ("l", o.low),
+                                              ("c", o.close)):
+                            self.assertNear(ours_col, s[col])
+
+    def test_an_ex_dividend_week_keeps_its_traded_open_where_stooq_adjusts_it_down(self):
+        """Low and close still match Stooq; the open is what traded, above Stooq's adjusted one."""
+        for (ticker, iv, k), traded_open in DIVIDEND_WEEKS.items():
+            o = {label(b): b for b in pipeline(ticker, iv)}[k]
+            s = load_stooq(ticker, iv)[k]
+            with self.subTest(ticker=ticker, interval=iv, period=k):
+                self.assertNear(o.low, s["l"])
+                self.assertNear(o.close, s["c"])
+                self.assertNear(o.open, traded_open)
+                self.assertGreater(num(o.open), s["o"])
 
     # The newest closed period on Saturday FROZEN_TODAY, the same for every ticker.
     LAST_CLOSED = {
