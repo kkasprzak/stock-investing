@@ -36,31 +36,36 @@ def label(b):
 # --------------------------------------------------------------------------- unit: pure functions
 
 class TestAggregate(unittest.TestCase):
-    def _week(self, complete):
-        # Mon-Wed of one week; open=Mon, high=max, low=min, close=Wed, vol=sum
-        return [
-            daily_bar("2026-07-20", 10.0, 12.0, 9.0, 11.0, 100),
-            daily_bar("2026-07-21", 11.0, 13.0, 10.5, 12.5, 200),
-            daily_bar("2026-07-22", 12.5, 12.9, 8.5, 9.5, 300, complete=complete),
-        ]
+    # Mon-Wed 07-20..07-22 of one week, every session closed
+    WEEK = [
+        daily_bar("2026-07-20", 10.0, 12.0, 9.0, 11.0, 100),
+        daily_bar("2026-07-21", 11.0, 13.0, 10.5, 12.5, 200),
+        daily_bar("2026-07-22", 12.5, 12.9, 8.5, 9.5, 300),
+    ]
 
     def test_rollup(self):
-        [b] = aggregate(self._week(True), W, D("2026-07-25"))
-        self.assertEqual(b, PeriodBar(D("2026-07-20"), price(10.0), price(13.0), price(8.5),
-                                      price(9.5), Volume(600), True, Quality.GOOD))
+        [b] = aggregate(self.WEEK, W, D("2026-07-25"))
+        self.assertEqual(b, PeriodBar(
+            period_start=D("2026-07-20"),
+            open=price(10.0),     # Monday's
+            high=price(13.0),     # Tuesday's, the highest
+            low=price(8.5),       # Wednesday's, the lowest
+            close=price(9.5),     # Wednesday's, the last
+            volume=Volume(600),   # 100 + 200 + 300
+            complete=True, quality=Quality.GOOD))
 
     def test_takes_only_a_period_interval(self):
-        """Daily is not a rollup: given Interval.DAILY, aggregate once grouped by month."""
         for interval in (Interval.DAILY, Interval.WEEKLY, "w"):
             with self.subTest(interval=interval), self.assertRaises(TypeError):
-                aggregate(self._week(True), interval, D("2026-07-25"))
+                aggregate(self.WEEK, interval, D("2026-07-25"))
 
     def test_complete_after_friday(self):   # weekend: week's Friday < today -> complete
-        [b] = aggregate(self._week(True), W, D("2026-07-25"))
+        [b] = aggregate(self.WEEK, W, D("2026-07-25"))
         self.assertTrue(b.complete)
 
-    def test_incomplete_midweek(self):      # Wednesday: Friday 07-24 not < today 07-22 -> forming
-        [b] = aggregate(self._week(False), W, D("2026-07-22"))
+    def test_incomplete_midweek(self):
+        # Wednesday evening: every session so far has closed, but Friday 07-24 has not come
+        [b] = aggregate(self.WEEK, W, D("2026-07-22"))
         self.assertFalse(b.complete)
 
     def test_columns_roll_up_separately(self):
