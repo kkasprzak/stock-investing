@@ -424,19 +424,27 @@ class TestPlaceholderSessions(unittest.TestCase):
         trusted = [dataclasses.replace(b, trust=Trust.TRUSTED) for b in self.served]
         self.assertLess(atr_wilder(trusted, ATR14).value, clean.value)
 
-    def test_a_gap_inside_the_window_is_left_out_named_and_the_window_reaches_one_further(self):
-        gap = len(self.daily) - 30
+    def _placeholder_inside_the_window(self):
+        """The real series with one session, well inside the window, served as a placeholder; and
+        the series with that session simply missing."""
+        gap = len(self.daily) - series_window(ATR14) // 2
         served = [*self.daily[:gap], placeholder(self.daily[gap], self.daily[gap - 1].close),
                   *self.daily[gap + 1:]]
         without = [*self.daily[:gap], *self.daily[gap + 1:]]
-        a = atr_wilder(served, ATR14)
-        self.assertEqual(a, dataclasses.replace(atr_wilder(without, ATR14),
-                                                quality=Quality((self.daily[gap].session,))))
-        self.assertEqual(a.bars_used, 71)
+        return served, without, self.daily[gap].session
+
+    def test_atr_reads_past_a_gap_inside_the_window_and_names_it(self):
+        served, without, gap = self._placeholder_inside_the_window()
+        self.assertEqual(atr_wilder(served, ATR14),
+                         dataclasses.replace(atr_wilder(without, ATR14), quality=Quality((gap,))))
+
+    def test_a_gap_inside_the_swing_window_pushes_its_start_one_session_back_and_is_named(self):
+        served, _, gap = self._placeholder_inside_the_window()
+        window = series_window(ATR14)
         s = swing_lows(served, EACH2, atr_n=ATR14)
-        self.assertEqual((s.window.start, s.window_sessions),
-                         (self.daily[-72].session, 71))
-        self.assertEqual(s.quality, Quality((self.daily[gap].session,)))
+        # the window still holds `window` trusted sessions, so it begins one session earlier
+        self.assertEqual((s.window.start, s.window_sessions, s.quality),
+                         (self.daily[-(window + 1)].session, window, Quality((gap,))))
 
     def test_no_swing_low_is_confirmed_by_a_placeholder(self):
         s, clean = swing_lows(self.served, EACH2), swing_lows(self.clean, EACH2)
