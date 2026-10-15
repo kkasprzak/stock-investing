@@ -1,0 +1,10 @@
+symbol: KTY.PL
+trend_MN_W1: sideways — monthly range 1200–1362 holds, weekly rolled over from the top of it.
+momentum_D1: weakness — five lower closes in a row, last at 1204.
+key_levels: 1324, 1257, 1200, 1170
+technical_status: below trigger
+condition: a daily close back above 1257 restores the range.
+invalidation: 1195
+technical_stop: 1195
+score: 3
+note: Price sits on the floor of a 1200–1362 range, and the 1195 level is the one that matters on both the daily and weekly chart.
