@@ -553,11 +553,17 @@ class TestClosedPlaceholderInThePeriodInProgress(unittest.TestCase):
     TODAY = D("2026-10-13")
     MONDAY = D("2026-10-12")
 
+    # Three real weeks whose lows are 8, 7, 9: one session each side confirms the middle week, so
+    # the weekly swing-low reading has a low to keep, not just a quality.
+    REAL_WEEKS = {
+        ("2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25"): [10, 9, 8, 9, 10],
+        ("2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"): [9.5, 8.5, 7, 8, 9],
+        ("2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"): [11, 10, 9, 10, 12],
+    }
+
     def setUp(self):
-        lows = iter([10, 9, 8, 9, 10, 9.5, 8.5, 7, 8, 9, 11, 10, 9, 10, 12])   # Mon..Fri, 3 weeks
-        self.real = [daily_bar(f"2026-{m:02d}-{d:02d}", lo + 0.5, lo + 2, lo, lo + 1, 100)
-                     for m, days in ((9, (21, 22, 23, 24, 25, 28, 29, 30)), (10, (1, 2, 5, 6, 7, 8, 9)))
-                     for d, lo in zip(days, lows)]
+        self.real = [daily_bar(day, lo + 0.5, lo + 2, lo, lo + 1, 100)
+                     for days, lows in self.REAL_WEEKS.items() for day, lo in zip(days, lows)]
         at = self.real[-1].close
         self.served = [*self.real,
                        placeholder(daily_bar("2026-10-12"), at),
@@ -566,8 +572,9 @@ class TestClosedPlaceholderInThePeriodInProgress(unittest.TestCase):
         self.clean = aggregate(self.real, W, self.TODAY)
 
     def test_the_week_in_progress_is_forming_and_names_its_closed_monday(self):
-        self.assertEqual(self.weeks[-1], PeriodBar(D("2026-10-12"), None, None, None, None, None,
-                                                   False, Quality((self.MONDAY,))))
+        self.assertEqual(self.weeks[-1], PeriodBar(
+            period_start=D("2026-10-12"), open=None, high=None, low=None, close=None, volume=None,
+            complete=False, quality=Quality((self.MONDAY,))))
 
     def test_daily_last_closed_names_the_monday(self):
         self.assertEqual(last_closed(self.served),
@@ -586,9 +593,10 @@ class TestClosedPlaceholderInThePeriodInProgress(unittest.TestCase):
                                                 quality=Quality((self.MONDAY,))))
 
     def test_weekly_swing_lows_name_the_monday(self):
-        s = swing_lows(self.weeks, EACH1, Interval.WEEKLY)
-        self.assertEqual(s, dataclasses.replace(swing_lows(self.clean, EACH1, Interval.WEEKLY),
-                                                quality=Quality((self.MONDAY,))))
+        s, clean = swing_lows(self.weeks, EACH1, Interval.WEEKLY), swing_lows(self.clean, EACH1,
+                                                                               Interval.WEEKLY)
+        self.assertEqual([r.session for r in clean.detected], [D("2026-09-28")])   # not an empty match
+        self.assertEqual(s, dataclasses.replace(clean, quality=Quality((self.MONDAY,))))
 
     def test_a_forming_daily_placeholder_is_still_not_named(self):
         """The fix is for period bars only: Tuesday has not ended, so no D1 reading names it."""
