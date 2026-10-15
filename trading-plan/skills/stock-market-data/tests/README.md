@@ -161,8 +161,9 @@ values; the tests re-assert them on every run.
   trusted as its source says; an untrusted session that ended leaves itself out of a reading, a
   forming one leaves nothing out; a period bar's day is its first day and it is always trusted,
   judged by its quality instead.
-- **Quality of readings** — `TestReadingsCarryQuality`: without an untrusted session every reading is
-  `good` and every value is the one the golden tests pin. `TestPlaceholderSessions`: ATR and its
+- **Quality of readings** — `TestReadingsCarryQuality`: without an untrusted session no reading
+  leaves anything out and every week is `good` (the golden tests pin the values on that same
+  series). `TestPlaceholderSessions`: ATR and its
   `as_of` equal the ATR on the clean prefix, `uncertain` with the five dates; a gap inside the window
   is named and pushes the window one candle further back; no swing low is confirmed by a placeholder,
   and one is once real sessions follow the gap; `last_closed` is the last real session, read over the

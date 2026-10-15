@@ -413,16 +413,19 @@ def sessions(bars):
 
 
 class TestReadingsCarryQuality(unittest.TestCase):
-    """Without a session the source does not vouch for, every reading is GOOD and every value is the
-    one it always was (the golden values above are read on the same series)."""
+    """On PKN's real series, every session of which its source vouches for, nothing is left out of
+    any reading (the golden tests above pin the values on the same series)."""
 
-    def test_every_reading_is_good(self):
-        daily = pipeline("PKN", "d")
-        readings = [atr_wilder(daily), swing_lows(daily), last_closed(daily),
-                    *aggregate(daily, W, FROZEN_DATE)]
+    def setUp(self):
+        self.daily = pipeline("PKN", "d")
+
+    def test_every_reading_leaves_nothing_out(self):
+        readings = [atr_wilder(self.daily, ATR14), swing_lows(self.daily, EACH2),
+                    last_closed(self.daily), *aggregate(self.daily, W, FROZEN_DATE)]
         self.assertEqual({r.quality for r in readings}, {Quality.GOOD})
-        self.assertEqual({b.status for b in aggregate(daily, W, FROZEN_DATE)}, {Status.GOOD})
-        self.assertIsInstance(swing_lows(daily), SwingLows)
+
+    def test_every_week_is_good(self):
+        self.assertEqual({b.status for b in aggregate(self.daily, W, FROZEN_DATE)}, {Status.GOOD})
 
 
 class TestPlaceholderSessions(unittest.TestCase):
