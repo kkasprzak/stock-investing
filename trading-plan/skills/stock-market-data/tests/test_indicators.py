@@ -258,15 +258,22 @@ class TestSwingLows(unittest.TestCase):
 
     def test_derived_fields_carry_what_the_rule_needs(self):
         first, second = swing_lows(self.HAND, EACH2).detected
-        # Arrange / Act / Assert — the first row has no predecessor to compare with
-        self.assertEqual(first, SwingLow(D("2026-01-03"), price(8), None, 6, price(7)))
-        self.assertEqual(second, SwingLow(D("2026-01-07"), price(7), False, 2, price(8)))
+        self.assertEqual(first, SwingLow(
+            session=D("2026-01-03"), low_price=price(8),
+            higher_than_previous_row_low=None,          # the first row has nothing to compare with
+            sessions_after_in_window=6, lowest_low_in_those_sessions=price(7)))
+        self.assertEqual(second, SwingLow(
+            session=D("2026-01-07"), low_price=price(7),
+            higher_than_previous_row_low=False,         # 7 is below the 8 before it
+            sessions_after_in_window=2, lowest_low_in_those_sessions=price(8)))
         self.assertEqual((first.undercut_by_later_session, second.undercut_by_later_session),
                          (True, False))
 
     def test_undercut_is_read_from_the_two_prices_not_stored(self):
         with self.assertRaises(TypeError):
-            SwingLow(D("2026-01-03"), price(8), None, 6, price(7), False)
+            SwingLow(session=D("2026-01-03"), low_price=price(8),
+                     higher_than_previous_row_low=None, sessions_after_in_window=6,
+                     lowest_low_in_those_sessions=price(7), undercut_by_later_session=False)
 
     def test_the_count_is_sessions_each_side_not_an_atr_period(self):
         with self.assertRaises(TypeError):
@@ -365,7 +372,9 @@ class TestSwingLows(unittest.TestCase):
                           D("2026-07-22")))
         self.assertEqual(len(s.detected), 10)
         self.assertEqual(s.detected[-1],
-                         SwingLow(D("2026-07-17"), price("144.2"), True, 5, price("144.88")))
+                         SwingLow(session=D("2026-07-17"), low_price=price("144.2"),
+                                  higher_than_previous_row_low=True, sessions_after_in_window=5,
+                                  lowest_low_in_those_sessions=price("144.88")))
         self.assertFalse(s.detected[-1].undercut_by_later_session)
 
     def test_weekly_runs_on_aggregated_candles(self):
@@ -477,7 +486,9 @@ class TestPlaceholderSessions(unittest.TestCase):
         after = [daily_bar("2026-01-06", 9, 10, 9, 9.5), daily_bar("2026-01-07", 10, 11, 10, 10.5)]
         self.assertEqual(swing_lows([*real, *gap], EACH2).detected, ())
         s = swing_lows([*real, *gap, *after], EACH2)
-        self.assertEqual(s.detected, (SwingLow(D("2026-01-03"), price(8), None, 2, price(9)),))
+        self.assertEqual(s.detected, (SwingLow(
+            session=D("2026-01-03"), low_price=price(8), higher_than_previous_row_low=None,
+            sessions_after_in_window=2, lowest_low_in_those_sessions=price(9)),))
         self.assertEqual(s.quality, Quality((D("2026-01-04"), D("2026-01-05"))))
 
     def test_last_closed_is_the_last_real_session(self):
