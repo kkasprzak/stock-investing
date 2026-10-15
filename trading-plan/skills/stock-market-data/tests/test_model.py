@@ -277,6 +277,49 @@ class TestDailyBar(unittest.TestCase):
         self.assertFalse(b.trust.trusted)
 
 
+class TestDailyBarAsCandle(unittest.TestCase):
+    """What a daily bar tells a reading over it: its day, whether it may be read, and what it
+    leaves out of the reading's quality."""
+
+    def bar(self, complete=True, trust=Trust.TRUSTED):
+        return DailyBar(D2, p("100"), p("104"), p("98"), p("102"), Volume(1000),
+                        complete=complete, source="yahoo", trust=trust)
+
+    def test_its_day_is_its_session(self):
+        self.assertEqual(self.bar().day, D2)
+
+    def test_trusted_when_its_source_vouches_for_it(self):
+        self.assertTrue(self.bar(trust=Trust.TRUSTED).trusted)
+
+    def test_not_trusted_when_its_source_does_not(self):
+        self.assertFalse(self.bar(trust=Trust.untrusted("placeholder")).trusted)
+
+    def test_a_trusted_session_leaves_nothing_out(self):
+        self.assertEqual(self.bar(trust=Trust.TRUSTED).quality, Quality.GOOD)
+
+    def test_an_untrusted_session_that_ended_leaves_itself_out(self):
+        self.assertEqual(self.bar(complete=True, trust=Trust.untrusted("placeholder")).quality,
+                         Quality((D2,)))
+
+    def test_an_untrusted_forming_session_leaves_nothing_out(self):
+        # not read anyway because it has not closed, so it is no left-out session (ADR 0002)
+        self.assertEqual(self.bar(complete=False, trust=Trust.untrusted("placeholder")).quality,
+                         Quality.GOOD)
+
+
+class TestPeriodBarAsCandle(unittest.TestCase):
+    def bar(self, quality=Quality.GOOD):
+        return PeriodBar(D1, p("100"), p("104"), p("98"), p("102"), Volume(1000), complete=True,
+                         quality=quality)
+
+    def test_its_day_is_the_first_day_of_its_period(self):
+        self.assertEqual(self.bar().day, D1)
+
+    def test_trusted_even_when_it_left_sessions_out(self):
+        # judged by its quality, not vouched for by a source
+        self.assertTrue(self.bar(quality=Quality((D2,))).trusted)
+
+
 class TestPeriodBar(unittest.TestCase):
     def bar(self, close, quality):
         return PeriodBar(D1, p("100"), p("104"), p("98"), close, Volume(1000), complete=True,

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import ClassVar, Mapping
+from typing import ClassVar, Mapping, Protocol
 
 _ISIN = re.compile(r"[A-Z]{2}[A-Z0-9]{9}[0-9]")
 _PRICE = re.compile(r"[0-9]+(\.[0-9]+)?")
@@ -172,6 +172,30 @@ class Quality:
 Quality.GOOD = Quality(())
 
 
+class Candle(Protocol):
+    """A candle as a reading over a series sees it, daily or rolled up: its day, its columns,
+    whether it may be read, and what it leaves out of the quality of a value read over it."""
+
+    @property
+    def day(self) -> date: ...
+    @property
+    def open(self) -> Price | None: ...
+    @property
+    def high(self) -> Price | None: ...
+    @property
+    def low(self) -> Price | None: ...
+    @property
+    def close(self) -> Price | None: ...
+    @property
+    def volume(self) -> Volume | None: ...
+    @property
+    def complete(self) -> bool: ...
+    @property
+    def trusted(self) -> bool: ...
+    @property
+    def quality(self) -> Quality: ...
+
+
 @dataclass(frozen=True)
 class DailyBar:
     """What a source said about one session. Not a quote: it holds no OHLC rules, since a source
@@ -187,10 +211,26 @@ class DailyBar:
     source: str
     trust: Trust
 
+    @property
+    def day(self) -> date:
+        return self.session
+
+    @property
+    def trusted(self) -> bool:
+        return self.trust.trusted
+
+    @property
+    def quality(self) -> Quality:
+        """What this bar leaves out of a value read over it, not a status of its own (a daily bar
+        is reported by its trust): an untrusted session that ended names itself. A forming one is
+        neither a value nor a left-out session, so it names nothing."""
+        return Quality((self.session,)) if self.complete and not self.trusted else Quality.GOOD
+
 
 @dataclass(frozen=True)
 class PeriodBar:
-    """A W1/MN candle rolled up from daily bars: a derived value, so it carries quality."""
+    """A W1/MN candle rolled up from daily bars: a derived value, so it carries quality. While the
+    period is forming, that quality names only the period's sessions that already ended."""
 
     period_start: date
     open: Price | None
@@ -200,6 +240,15 @@ class PeriodBar:
     volume: Volume | None
     complete: bool
     quality: Quality
+
+    @property
+    def day(self) -> date:
+        return self.period_start
+
+    @property
+    def trusted(self) -> bool:
+        """Always: no source vouches for a period, it is judged by its quality instead."""
+        return True
 
     @property
     def status(self) -> Status:
