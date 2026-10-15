@@ -297,20 +297,33 @@ class TestSwingLows(unittest.TestCase):
         s = swing_lows(self.HAND[:2], EACH2)
         self.assertEqual((s.window_sessions, s.detectable_through, s.detected), (2, None, ()))
 
-    def test_detectable_through_must_fit_the_window_and_the_confirmation(self):
-        """A window of 9 sessions confirms through some session inside it; 2 or fewer have no edge.
-        Neither can be built the other way round."""
-        def swings(window_sessions, through, window=DateRange(D("2026-01-01"), D("2026-01-09"))):
-            return SwingLows(each_side=EACH2, window=window, window_sessions=window_sessions,
-                             detectable_through=through, detected=(), interval=None,
-                             quality=Quality.GOOD)
-        swings(9, D("2026-01-07"))
-        swings(2, None, DateRange(D("2026-01-01"), D("2026-01-02")))
-        for window_sessions, through in ((9, None), (2, D("2026-01-01")), (9, D("2026-01-09")),
-                                         (9, D("2025-12-31"))):
-            with self.subTest(window_sessions=window_sessions, through=through):
-                with self.assertRaises(ValueError):
-                    swings(window_sessions, through)
+    # With EACH2, a window of 9 sessions (01-01..01-09) can confirm a low; one of 2 (01-01..01-02)
+    # cannot, because no session has two after it.
+    NINE = DateRange(D("2026-01-01"), D("2026-01-09"))
+    TWO = DateRange(D("2026-01-01"), D("2026-01-02"))
+
+    def swings(self, window, window_sessions, through):
+        return SwingLows(each_side=EACH2, window=window, window_sessions=window_sessions,
+                         detectable_through=through, detected=(), interval=None,
+                         quality=Quality.GOOD)
+
+    def test_a_window_that_can_confirm_has_its_edge_inside_it(self):
+        self.assertEqual(self.swings(self.NINE, 9, D("2026-01-07")).detectable_through,
+                         D("2026-01-07"))
+
+    def test_a_window_too_short_to_confirm_has_no_edge(self):
+        self.assertIsNone(self.swings(self.TWO, 2, None).detectable_through)
+
+    def test_an_edge_that_does_not_fit_is_refused(self):
+        cases = {
+            "a window that can confirm, without an edge": (self.NINE, 9, None),
+            "a window too short to confirm, with an edge": (self.TWO, 2, D("2026-01-01")),
+            "the edge on the window's last session": (self.NINE, 9, D("2026-01-09")),
+            "the edge before the window": (self.NINE, 9, D("2025-12-31")),
+        }
+        for case, (window, window_sessions, through) in cases.items():
+            with self.subTest(case), self.assertRaises(ValueError):
+                self.swings(window, window_sessions, through)
 
     def test_forming_bar_excluded(self):
         bars = [*self.HAND[:-1], dataclasses.replace(self.HAND[-1], complete=False)]
