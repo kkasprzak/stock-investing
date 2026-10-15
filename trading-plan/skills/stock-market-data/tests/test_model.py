@@ -271,10 +271,9 @@ class TestDailyBar(unittest.TestCase):
 
     def test_holds_no_ohlc_rules(self):
         # what a source said, not a quote: a low above the high is still a bar
-        b = DailyBar(D1, p("100"), p("98"), p("104"), p("102"), Volume(0), complete=True,
-                     source="yahoo", trust=Trust.untrusted("placeholder"))
+        b = DailyBar(D1, p("100"), p("98"), p("104"), p("102"), Volume(1000), complete=True,
+                     source="yahoo", trust=Trust.TRUSTED)
         self.assertEqual((b.high, b.low), (p("98"), p("104")))
-        self.assertFalse(b.trust.trusted)
 
 
 class TestDailyBarAsCandle(unittest.TestCase):

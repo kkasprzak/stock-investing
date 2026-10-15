@@ -30,42 +30,47 @@ EACH1, EACH2, EACH3 = SessionsEachSide(1), SessionsEachSide(2), SessionsEachSide
 
 def label(b):
     """The ISO date a bar is keyed by in the output: a session, or a period's first day."""
-    return (b.session if hasattr(b, "session") else b.period_start).isoformat()
+    return b.day.isoformat()
 
 
 # --------------------------------------------------------------------------- unit: pure functions
 
 class TestAggregate(unittest.TestCase):
-    def _week(self, complete):
-        # Mon-Wed of one week; open=Mon, high=max, low=min, close=Wed, vol=sum
-        return [
-            daily_bar("2026-07-20", 10.0, 12.0, 9.0, 11.0, 100),
-            daily_bar("2026-07-21", 11.0, 13.0, 10.5, 12.5, 200),
-            daily_bar("2026-07-22", 12.5, 12.9, 8.5, 9.5, 300, complete=complete),
-        ]
+    # Mon-Wed 07-20..07-22 of one week, every session closed
+    WEEK = [
+        daily_bar("2026-07-20", 10.0, 12.0, 9.0, 11.0, 100),
+        daily_bar("2026-07-21", 11.0, 13.0, 10.5, 12.5, 200),
+        daily_bar("2026-07-22", 12.5, 12.9, 8.5, 9.5, 300),
+    ]
 
     def test_rollup(self):
-        [b] = aggregate(self._week(True), W, D("2026-07-25"))
-        self.assertEqual(b, PeriodBar(D("2026-07-20"), price(10.0), price(13.0), price(8.5),
-                                      price(9.5), Volume(600), True, Quality.GOOD))
+        [b] = aggregate(self.WEEK, W, D("2026-07-25"))
+        self.assertEqual(b, PeriodBar(
+            period_start=D("2026-07-20"),
+            open=price(10.0),     # Monday's
+            high=price(13.0),     # Tuesday's, the highest
+            low=price(8.5),       # Wednesday's, the lowest
+            close=price(9.5),     # Wednesday's, the last
+            volume=Volume(600),   # 100 + 200 + 300
+            complete=True, quality=Quality.GOOD))
 
     def test_takes_only_a_period_interval(self):
-        """Daily is not a rollup: given Interval.DAILY, aggregate once grouped by month."""
         for interval in (Interval.DAILY, Interval.WEEKLY, "w"):
             with self.subTest(interval=interval), self.assertRaises(TypeError):
-                aggregate(self._week(True), interval, D("2026-07-25"))
+                aggregate(self.WEEK, interval, D("2026-07-25"))
 
     def test_complete_after_friday(self):   # weekend: week's Friday < today -> complete
-        [b] = aggregate(self._week(True), W, D("2026-07-25"))
+        [b] = aggregate(self.WEEK, W, D("2026-07-25"))
         self.assertTrue(b.complete)
 
-    def test_incomplete_midweek(self):      # Wednesday: Friday 07-24 not < today 07-22 -> forming
-        [b] = aggregate(self._week(False), W, D("2026-07-22"))
+    def test_incomplete_midweek(self):
+        # Wednesday evening: every session so far has closed, but Friday 07-24 has not come
+        [b] = aggregate(self.WEEK, W, D("2026-07-22"))
         self.assertFalse(b.complete)
 
     def test_columns_roll_up_separately(self):
         """A gap in one column does not drop the session from the others: o is the first open
-        present, v sums the volumes present, and a period with no volume at all has none."""
+        present, and a period with no volume at all has none."""
         days = [daily_bar("2026-07-20", None, 12.0, 9.0, 11.0),
                 daily_bar("2026-07-21", 11.0, 13.0, 10.5, 12.5)]
         [b] = aggregate(days, W, D("2026-07-25"))
@@ -123,8 +128,8 @@ class TestLastClosed(unittest.TestCase):
         forming = dataclasses.replace(daily[-1], complete=False)
         rec = quote_record([*daily[:-1], forming], "d", 1, FROZEN_DATE)
         self.assertEqual(rec["bars"], [forming])
-        self.assertEqual(rec["last_closed"],
-                         LastClosed(D("2026-07-23"), price("155.86"), Quality.GOOD))
+        before = daily[-2]
+        self.assertEqual(rec["last_closed"], LastClosed(before.session, before.close, Quality.GOOD))
 
 
 # ----------------------------------------------------------- integration: pipeline vs Stooq oracle
@@ -150,13 +155,15 @@ class TestATR(unittest.TestCase):
                                        as_of=D("2026-01-07"), interval=None, quality=Quality.GOOD))
         self.assertTrue(a.short_history)                        # 4 TRs < ATR_WARMUP x 2
 
-    def test_short_history_is_read_from_bars_used_not_stored(self):
+    def test_short_history_until_the_runup_is_held(self):
         """A reading cannot say it is settled while holding fewer TRs than the run-up: 5 x 2 TRs
         need 11 candles."""
         def reading(bars_used):
             return AtrReading(n=ATR2, method="wilder", value=1.0, bars_used=bars_used,
                               as_of=D("2026-01-07"), interval=None, quality=Quality.GOOD)
         self.assertEqual((reading(10).short_history, reading(11).short_history), (True, False))
+
+    def test_short_history_is_not_stored(self):
         with self.assertRaises(TypeError):
             AtrReading(n=ATR2, method="wilder", value=1.0, bars_used=11, as_of=D("2026-01-07"),
                        short_history=True, interval=None, quality=Quality.GOOD)
@@ -207,6 +214,9 @@ class TestATR(unittest.TestCase):
         self.assertNotEqual(atr_wilder(daily[-20:], ATR14).value, vals[20])
 
     def test_golden_pkn_daily_n14(self):
+        """Regression pin since v0.1, not an independently verified value — the arithmetic rides on
+        the hand tests above. It pins that the whole pipeline still reads PKN to the same ATR, over
+        the 71 sessions (14 x 5 + 1) up to Friday 07-24."""
         a = quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_DATE, ATR14)["atr"]
         self.assertAlmostEqual(a.value, 3.5264, places=4)
         self.assertEqual((a.as_of, a.bars_used, a.interval), (D("2026-07-24"), 71, Interval.DAILY))
@@ -218,7 +228,9 @@ class TestATR(unittest.TestCase):
         self.assertEqual(atr_wilder(daily, ATR14), atr_wilder(daily[-71:], ATR14))
         self.assertEqual(atr_wilder(daily, ATR14).bars_used, 71)
 
-    def test_weekly_runs_on_aggregated_candles(self):
+    def test_golden_pkn_weekly_n14_reads_every_week_of_the_fixture(self):
+        """Regression pin, as the daily one. The fixture's 150 sessions run from Monday 2025-12-15
+        to Friday 07-24: 32 weeks, all closed on Saturday, fewer than the 71 the window allows."""
         a = quote_record(pipeline("PKN", "d"), "w", 6, FROZEN_DATE, ATR14)["atr"]
         self.assertEqual((a.interval, a.as_of, a.bars_used), (Interval.WEEKLY, D("2026-07-20"), 32))
         self.assertAlmostEqual(a.value, 8.8829, places=4)
@@ -258,15 +270,22 @@ class TestSwingLows(unittest.TestCase):
 
     def test_derived_fields_carry_what_the_rule_needs(self):
         first, second = swing_lows(self.HAND, EACH2).detected
-        # Arrange / Act / Assert — the first row has no predecessor to compare with
-        self.assertEqual(first, SwingLow(D("2026-01-03"), price(8), None, 6, price(7)))
-        self.assertEqual(second, SwingLow(D("2026-01-07"), price(7), False, 2, price(8)))
+        self.assertEqual(first, SwingLow(
+            session=D("2026-01-03"), low_price=price(8),
+            higher_than_previous_row_low=None,          # the first row has nothing to compare with
+            sessions_after_in_window=6, lowest_low_in_those_sessions=price(7)))
+        self.assertEqual(second, SwingLow(
+            session=D("2026-01-07"), low_price=price(7),
+            higher_than_previous_row_low=False,         # 7 is below the 8 before it
+            sessions_after_in_window=2, lowest_low_in_those_sessions=price(8)))
         self.assertEqual((first.undercut_by_later_session, second.undercut_by_later_session),
                          (True, False))
 
     def test_undercut_is_read_from_the_two_prices_not_stored(self):
         with self.assertRaises(TypeError):
-            SwingLow(D("2026-01-03"), price(8), None, 6, price(7), False)
+            SwingLow(session=D("2026-01-03"), low_price=price(8),
+                     higher_than_previous_row_low=None, sessions_after_in_window=6,
+                     lowest_low_in_those_sessions=price(7), undercut_by_later_session=False)
 
     def test_the_count_is_sessions_each_side_not_an_atr_period(self):
         with self.assertRaises(TypeError):
@@ -297,26 +316,33 @@ class TestSwingLows(unittest.TestCase):
         s = swing_lows(self.HAND[:2], EACH2)
         self.assertEqual((s.window_sessions, s.detectable_through, s.detected), (2, None, ()))
 
-    def test_detectable_through_must_fit_the_window_and_the_confirmation(self):
-        """A window of 9 sessions confirms through some session inside it; 2 or fewer have no edge.
-        Neither can be built the other way round."""
-        def swings(window_sessions, through, window=DateRange(D("2026-01-01"), D("2026-01-09"))):
-            return SwingLows(each_side=EACH2, window=window, window_sessions=window_sessions,
-                             detectable_through=through, detected=(), interval=None,
-                             quality=Quality.GOOD)
-        swings(9, D("2026-01-07"))
-        swings(2, None, DateRange(D("2026-01-01"), D("2026-01-02")))
-        for window_sessions, through in ((9, None), (2, D("2026-01-01")), (9, D("2026-01-09")),
-                                         (9, D("2025-12-31"))):
-            with self.subTest(window_sessions=window_sessions, through=through):
-                with self.assertRaises(ValueError):
-                    swings(window_sessions, through)
+    # With EACH2, a window of 9 sessions (01-01..01-09) can confirm a low; one of 2 (01-01..01-02)
+    # cannot, because no session has two after it.
+    NINE = DateRange(D("2026-01-01"), D("2026-01-09"))
+    TWO = DateRange(D("2026-01-01"), D("2026-01-02"))
 
-    def test_the_window_cannot_end_before_it_starts(self):
-        with self.assertRaises(ValueError):
-            SwingLows(each_side=EACH2, window=DateRange(D("2026-01-09"), D("2026-01-01")),
-                      window_sessions=9, detectable_through=D("2026-01-07"), detected=(),
-                      interval=None, quality=Quality.GOOD)
+    def swings(self, window, window_sessions, through):
+        return SwingLows(each_side=EACH2, window=window, window_sessions=window_sessions,
+                         detectable_through=through, detected=(), interval=None,
+                         quality=Quality.GOOD)
+
+    def test_a_window_that_can_confirm_has_its_edge_inside_it(self):
+        self.assertEqual(self.swings(self.NINE, 9, D("2026-01-07")).detectable_through,
+                         D("2026-01-07"))
+
+    def test_a_window_too_short_to_confirm_has_no_edge(self):
+        self.assertIsNone(self.swings(self.TWO, 2, None).detectable_through)
+
+    def test_an_edge_that_does_not_fit_is_refused(self):
+        cases = {
+            "a window that can confirm, without an edge": (self.NINE, 9, None),
+            "a window too short to confirm, with an edge": (self.TWO, 2, D("2026-01-01")),
+            "the edge on the window's last session": (self.NINE, 9, D("2026-01-09")),
+            "the edge before the window": (self.NINE, 9, D("2025-12-31")),
+        }
+        for case, (window, window_sessions, through) in cases.items():
+            with self.subTest(case), self.assertRaises(ValueError):
+                self.swings(window, window_sessions, through)
 
     def test_forming_bar_excluded(self):
         bars = [*self.HAND[:-1], dataclasses.replace(self.HAND[-1], complete=False)]
@@ -330,9 +356,9 @@ class TestSwingLows(unittest.TestCase):
         bars = [dataclasses.replace(b, open=None, high=None, close=None) for b in self.HAND]
         self.assertEqual(swing_lows(bars, EACH2).detected, swing_lows(self.HAND, EACH2).detected)
 
-    def test_no_pivot_is_an_empty_list_not_a_missing_key(self):
-        rising = [dataclasses.replace(b, low=price(10 + i), session=D(f"2026-03-{i + 1:02d}"))
-                  for i, b in enumerate(self.HAND)]
+    def test_rising_lows_detect_nothing(self):
+        rising = [daily_bar(f"2026-03-{i + 1:02d}", lo, lo + 1, lo, lo)
+                  for i, lo in enumerate(range(10, 19))]
         self.assertEqual(swing_lows(rising, EACH2).detected, ())
 
     def test_window_matches_atr_so_both_describe_one_stretch(self):
@@ -358,7 +384,9 @@ class TestSwingLows(unittest.TestCase):
                           D("2026-07-22")))
         self.assertEqual(len(s.detected), 10)
         self.assertEqual(s.detected[-1],
-                         SwingLow(D("2026-07-17"), price("144.2"), True, 5, price("144.88")))
+                         SwingLow(session=D("2026-07-17"), low_price=price("144.2"),
+                                  higher_than_previous_row_low=True, sessions_after_in_window=5,
+                                  lowest_low_in_those_sessions=price("144.88")))
         self.assertFalse(s.detected[-1].undercut_by_later_session)
 
     def test_weekly_runs_on_aggregated_candles(self):
@@ -373,6 +401,8 @@ class TestSwingLows(unittest.TestCase):
     def test_bars_needed_covers_the_window_without_atr(self):
         self.assertEqual(bars_needed(6, None, None), 6)
         self.assertEqual(bars_needed(6, None, EACH2), 71)     # swings alone still widen the fetch
+
+    def test_bars_needed_for_atr_and_swings_is_one_window_not_two(self):
         self.assertEqual(bars_needed(6, ATR14, EACH2), 71)
 
 
@@ -397,16 +427,19 @@ def sessions(bars):
 
 
 class TestReadingsCarryQuality(unittest.TestCase):
-    """Without a session the source does not vouch for, every reading is GOOD and every value is the
-    one it always was (the golden values above are read on the same series)."""
+    """On PKN's real series, every session of which its source vouches for, nothing is left out of
+    any reading (the golden tests above pin the values on the same series)."""
 
-    def test_every_reading_is_good(self):
-        daily = pipeline("PKN", "d")
-        readings = [atr_wilder(daily), swing_lows(daily), last_closed(daily),
-                    *aggregate(daily, W, FROZEN_DATE)]
+    def setUp(self):
+        self.daily = pipeline("PKN", "d")
+
+    def test_every_reading_leaves_nothing_out(self):
+        readings = [atr_wilder(self.daily, ATR14), swing_lows(self.daily, EACH2),
+                    last_closed(self.daily), *aggregate(self.daily, W, FROZEN_DATE)]
         self.assertEqual({r.quality for r in readings}, {Quality.GOOD})
-        self.assertEqual({b.status for b in aggregate(daily, W, FROZEN_DATE)}, {Status.GOOD})
-        self.assertIsInstance(swing_lows(daily), SwingLows)
+
+    def test_every_week_is_good(self):
+        self.assertEqual({b.status for b in aggregate(self.daily, W, FROZEN_DATE)}, {Status.GOOD})
 
 
 class TestPlaceholderSessions(unittest.TestCase):
@@ -430,19 +463,27 @@ class TestPlaceholderSessions(unittest.TestCase):
         trusted = [dataclasses.replace(b, trust=Trust.TRUSTED) for b in self.served]
         self.assertLess(atr_wilder(trusted, ATR14).value, clean.value)
 
-    def test_a_gap_inside_the_window_is_left_out_named_and_the_window_reaches_one_further(self):
-        gap = len(self.daily) - 30
+    def _placeholder_inside_the_window(self):
+        """The real series with one session, well inside the window, served as a placeholder; and
+        the series with that session simply missing."""
+        gap = len(self.daily) - series_window(ATR14) // 2
         served = [*self.daily[:gap], placeholder(self.daily[gap], self.daily[gap - 1].close),
                   *self.daily[gap + 1:]]
         without = [*self.daily[:gap], *self.daily[gap + 1:]]
-        a = atr_wilder(served, ATR14)
-        self.assertEqual(a, dataclasses.replace(atr_wilder(without, ATR14),
-                                                quality=Quality((self.daily[gap].session,))))
-        self.assertEqual(a.bars_used, 71)
+        return served, without, self.daily[gap].session
+
+    def test_atr_reads_past_a_gap_inside_the_window_and_names_it(self):
+        served, without, gap = self._placeholder_inside_the_window()
+        self.assertEqual(atr_wilder(served, ATR14),
+                         dataclasses.replace(atr_wilder(without, ATR14), quality=Quality((gap,))))
+
+    def test_a_gap_inside_the_swing_window_pushes_its_start_one_session_back_and_is_named(self):
+        served, _, gap = self._placeholder_inside_the_window()
+        window = series_window(ATR14)
         s = swing_lows(served, EACH2, atr_n=ATR14)
-        self.assertEqual((s.window.start, s.window_sessions),
-                         (self.daily[-72].session, 71))
-        self.assertEqual(s.quality, Quality((self.daily[gap].session,)))
+        # the window still holds `window` trusted sessions, so it begins one session earlier
+        self.assertEqual((s.window.start, s.window_sessions, s.quality),
+                         (self.daily[-(window + 1)].session, window, Quality((gap,))))
 
     def test_no_swing_low_is_confirmed_by_a_placeholder(self):
         s, clean = swing_lows(self.served, EACH2), swing_lows(self.clean, EACH2)
@@ -462,18 +503,23 @@ class TestPlaceholderSessions(unittest.TestCase):
         after = [daily_bar("2026-01-06", 9, 10, 9, 9.5), daily_bar("2026-01-07", 10, 11, 10, 10.5)]
         self.assertEqual(swing_lows([*real, *gap], EACH2).detected, ())
         s = swing_lows([*real, *gap, *after], EACH2)
-        self.assertEqual(s.detected, (SwingLow(D("2026-01-03"), price(8), None, 2, price(9)),))
+        self.assertEqual(s.detected, (SwingLow(
+            session=D("2026-01-03"), low_price=price(8), higher_than_previous_row_low=None,
+            sessions_after_in_window=2, lowest_low_in_those_sessions=price(9)),))
         self.assertEqual(s.quality, Quality((D("2026-01-04"), D("2026-01-05"))))
 
+    def last_real(self):
+        """What last_closed should read: Friday 07-17, naming the five placeholders after it."""
+        b = self.clean[-1]
+        return LastClosed(b.session, b.close, Quality(self.left_out))
+
     def test_last_closed_is_the_last_real_session(self):
-        self.assertEqual(last_closed(self.served),
-                         LastClosed(D("2026-07-17"), price("146.2"), Quality(self.left_out)))
+        self.assertEqual(last_closed(self.served), self.last_real())
 
     def test_last_closed_reads_the_whole_series_when_the_slice_is_all_placeholders(self):
         rec = quote_record(self.served, "d", 5, FROZEN_DATE)
         self.assertEqual(sessions(rec["bars"]), self.left_out)
-        self.assertEqual(rec["last_closed"],
-                         LastClosed(D("2026-07-17"), price("146.2"), Quality(self.left_out)))
+        self.assertEqual(rec["last_closed"], self.last_real())
 
     def test_a_week_of_placeholders_stays_in_the_series_with_no_value(self):
         week = aggregate(self.served, W, FROZEN_DATE)[-1]
@@ -524,11 +570,17 @@ class TestClosedPlaceholderInThePeriodInProgress(unittest.TestCase):
     TODAY = D("2026-10-13")
     MONDAY = D("2026-10-12")
 
+    # Three real weeks whose lows are 8, 7, 9: one session each side confirms the middle week, so
+    # the weekly swing-low reading has a low to keep, not just a quality.
+    REAL_WEEKS = {
+        ("2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25"): [10, 9, 8, 9, 10],
+        ("2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"): [9.5, 8.5, 7, 8, 9],
+        ("2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"): [11, 10, 9, 10, 12],
+    }
+
     def setUp(self):
-        lows = iter([10, 9, 8, 9, 10, 9.5, 8.5, 7, 8, 9, 11, 10, 9, 10, 12])   # Mon..Fri, 3 weeks
-        self.real = [daily_bar(f"2026-{m:02d}-{d:02d}", lo + 0.5, lo + 2, lo, lo + 1, 100)
-                     for m, days in ((9, (21, 22, 23, 24, 25, 28, 29, 30)), (10, (1, 2, 5, 6, 7, 8, 9)))
-                     for d, lo in zip(days, lows)]
+        self.real = [daily_bar(day, lo + 0.5, lo + 2, lo, lo + 1, 100)
+                     for days, lows in self.REAL_WEEKS.items() for day, lo in zip(days, lows)]
         at = self.real[-1].close
         self.served = [*self.real,
                        placeholder(daily_bar("2026-10-12"), at),
@@ -537,8 +589,9 @@ class TestClosedPlaceholderInThePeriodInProgress(unittest.TestCase):
         self.clean = aggregate(self.real, W, self.TODAY)
 
     def test_the_week_in_progress_is_forming_and_names_its_closed_monday(self):
-        self.assertEqual(self.weeks[-1], PeriodBar(D("2026-10-12"), None, None, None, None, None,
-                                                   False, Quality((self.MONDAY,))))
+        self.assertEqual(self.weeks[-1], PeriodBar(
+            period_start=D("2026-10-12"), open=None, high=None, low=None, close=None, volume=None,
+            complete=False, quality=Quality((self.MONDAY,))))
 
     def test_daily_last_closed_names_the_monday(self):
         self.assertEqual(last_closed(self.served),
@@ -557,9 +610,10 @@ class TestClosedPlaceholderInThePeriodInProgress(unittest.TestCase):
                                                 quality=Quality((self.MONDAY,))))
 
     def test_weekly_swing_lows_name_the_monday(self):
-        s = swing_lows(self.weeks, EACH1, Interval.WEEKLY)
-        self.assertEqual(s, dataclasses.replace(swing_lows(self.clean, EACH1, Interval.WEEKLY),
-                                                quality=Quality((self.MONDAY,))))
+        s, clean = swing_lows(self.weeks, EACH1, Interval.WEEKLY), swing_lows(self.clean, EACH1,
+                                                                               Interval.WEEKLY)
+        self.assertEqual([r.session for r in clean.detected], [D("2026-09-28")])   # not an empty match
+        self.assertEqual(s, dataclasses.replace(clean, quality=Quality((self.MONDAY,))))
 
     def test_a_forming_daily_placeholder_is_still_not_named(self):
         """The fix is for period bars only: Tuesday has not ended, so no D1 reading names it."""
@@ -577,43 +631,50 @@ class TestStooqOracle(unittest.TestCase):
     CASES = [("PKN", ("d", "w", "m")), ("KGH", ("d", "w", "m")), ("LPP", ("d", "w", "m"))]
     WINDOW = {"d": "2026-07-03", "w": "2026-06-01", "m": "2026-04-01"}   # inclusive lower bound
 
-    def test_ohlc_against_stooq(self):
+    def assertNear(self, ours, expected):
+        self.assertAlmostEqual(num(ours), expected, delta=TOL(expected))
+
+    def test_ohlc_matches_stooq_on_every_clean_period(self):
         for ticker, intervals in self.CASES:
             for iv in intervals:
                 ours = {label(b): b for b in pipeline(ticker, iv)}
                 stq = load_stooq(ticker, iv)
-                lo = self.WINDOW[iv]
-                overlap = sorted(k for k in set(ours) & set(stq) if k >= lo)
+                overlap = sorted(k for k in set(ours) & set(stq)
+                                 if k >= self.WINDOW[iv] and (ticker, iv, k) not in DIVIDEND_WEEKS)
                 self.assertGreaterEqual(len(overlap), 3, f"{ticker}/{iv}: too few overlapping periods")
                 for k in overlap:
                     o, s = ours[k], stq[k]
-                    div_open = DIVIDEND_WEEKS.get((ticker, iv, k))
                     with self.subTest(ticker=ticker, interval=iv, period=k):
-                        # Low & Close always match the independent source
-                        self.assertAlmostEqual(num(o.low), s["l"], delta=TOL(s["l"]))
-                        self.assertAlmostEqual(num(o.close), s["c"], delta=TOL(s["c"]))
-                        if div_open is None:
-                            self.assertAlmostEqual(num(o.open), s["o"], delta=TOL(s["o"]))
-                            self.assertAlmostEqual(num(o.high), s["h"], delta=TOL(s["h"]))
-                        else:
-                            # ex-div week: we report actual-traded open, Stooq back-adjusts it lower
-                            self.assertAlmostEqual(num(o.open), div_open, delta=TOL(div_open))
-                            self.assertGreater(num(o.open), s["o"])
+                        for col, ours_col in (("o", o.open), ("h", o.high), ("l", o.low),
+                                              ("c", o.close)):
+                            self.assertNear(ours_col, s[col])
 
-    def test_completeness_and_last_closed(self):
-        expect = {
-            ("PKN", "d"): ("2026-07-24", 156.0), ("PKN", "w"): ("2026-07-20", 156.0),
-            ("PKN", "m"): ("2026-06-01", 126.6),
-            ("KGH", "d"): ("2026-07-24", 303.5), ("KGH", "w"): ("2026-07-20", 303.5),
-            ("KGH", "m"): ("2026-06-01", 331.25),
-            ("LPP", "d"): ("2026-07-24", 20140.0), ("LPP", "w"): ("2026-07-20", 20140.0),
-            ("LPP", "m"): ("2026-06-01", 18280.0),
-        }
-        for (ticker, iv), (exp_date, exp_c) in expect.items():
-            lc = last_closed(pipeline(ticker, iv))
-            with self.subTest(ticker=ticker, interval=iv):
-                self.assertEqual(lc.session, D(exp_date))
-                self.assertAlmostEqual(num(lc.close), exp_c, delta=TOL(exp_c))
+    def test_an_ex_dividend_week_keeps_its_traded_open_where_stooq_adjusts_it_down(self):
+        """Low and close still match Stooq; the open is what traded, above Stooq's adjusted one."""
+        for (ticker, iv, k), traded_open in DIVIDEND_WEEKS.items():
+            o = {label(b): b for b in pipeline(ticker, iv)}[k]
+            s = load_stooq(ticker, iv)[k]
+            with self.subTest(ticker=ticker, interval=iv, period=k):
+                self.assertNear(o.low, s["l"])
+                self.assertNear(o.close, s["c"])
+                self.assertNear(o.open, traded_open)
+                self.assertGreater(num(o.open), s["o"])
+
+    # The newest closed period on Saturday FROZEN_TODAY, the same for every ticker.
+    LAST_CLOSED = {
+        "d": "2026-07-24",   # Friday, the last session in the fixtures
+        "w": "2026-07-20",   # that Friday closed its week
+        "m": "2026-06-01",   # July is still forming, so June
+    }
+
+    def test_last_closed_is_the_newest_closed_period_at_stooqs_close(self):
+        for ticker, intervals in self.CASES:
+            for iv in intervals:
+                lc = last_closed(pipeline(ticker, iv))
+                stooq_close = load_stooq(ticker, iv)[self.LAST_CLOSED[iv]]["c"]
+                with self.subTest(ticker=ticker, interval=iv):
+                    self.assertEqual(lc.session, D(self.LAST_CLOSED[iv]))
+                    self.assertAlmostEqual(num(lc.close), stooq_close, delta=TOL(stooq_close))
 
     def test_current_month_is_forming(self):
         for ticker in ("PKN", "KGH", "LPP"):

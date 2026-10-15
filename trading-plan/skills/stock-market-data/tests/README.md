@@ -133,7 +133,8 @@ values; the tests re-assert them on every run.
   KGH 2026-06-22) keep our unadjusted Open/High while Stooq back-adjusts — asserted explicitly, not
   skipped.
 - **Completeness / last_closed** — flags relative to `FROZEN_TODAY` (July month still forming; the
-  just-closed week complete on a Saturday).
+  just-closed week complete on a Saturday); `last_closed` is that newest closed period on every
+  interval, at Stooq's close for it.
 - **Session close** (`TestSessionClose`) — the flag follows the venue's session, not the date: today's
   bar forming during the session, complete after the close and all evening, conservative when the
   vendor omits the trading period, market tz beating machine tz. Weekly/monthly counterparts live in
@@ -160,8 +161,9 @@ values; the tests re-assert them on every run.
   trusted as its source says; an untrusted session that ended leaves itself out of a reading, a
   forming one leaves nothing out; a period bar's day is its first day and it is always trusted,
   judged by its quality instead.
-- **Quality of readings** — `TestReadingsCarryQuality`: without an untrusted session every reading is
-  `good` and every value is the one the golden tests pin. `TestPlaceholderSessions`: ATR and its
+- **Quality of readings** — `TestReadingsCarryQuality`: without an untrusted session no reading
+  leaves anything out and every week is `good` (the golden tests pin the values on that same
+  series). `TestPlaceholderSessions`: ATR and its
   `as_of` equal the ATR on the clean prefix, `uncertain` with the five dates; a gap inside the window
   is named and pushes the window one candle further back; no swing low is confirmed by a placeholder,
   and one is once real sessions follow the gap; `last_closed` is the last real session, read over the
