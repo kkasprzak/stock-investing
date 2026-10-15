@@ -602,20 +602,21 @@ class TestStooqOracle(unittest.TestCase):
                             self.assertAlmostEqual(num(o.open), div_open, delta=TOL(div_open))
                             self.assertGreater(num(o.open), s["o"])
 
-    def test_completeness_and_last_closed(self):
-        expect = {
-            ("PKN", "d"): ("2026-07-24", 156.0), ("PKN", "w"): ("2026-07-20", 156.0),
-            ("PKN", "m"): ("2026-06-01", 126.6),
-            ("KGH", "d"): ("2026-07-24", 303.5), ("KGH", "w"): ("2026-07-20", 303.5),
-            ("KGH", "m"): ("2026-06-01", 331.25),
-            ("LPP", "d"): ("2026-07-24", 20140.0), ("LPP", "w"): ("2026-07-20", 20140.0),
-            ("LPP", "m"): ("2026-06-01", 18280.0),
-        }
-        for (ticker, iv), (exp_date, exp_c) in expect.items():
-            lc = last_closed(pipeline(ticker, iv))
-            with self.subTest(ticker=ticker, interval=iv):
-                self.assertEqual(lc.session, D(exp_date))
-                self.assertAlmostEqual(num(lc.close), exp_c, delta=TOL(exp_c))
+    # The newest closed period on Saturday FROZEN_TODAY, the same for every ticker.
+    LAST_CLOSED = {
+        "d": "2026-07-24",   # Friday, the last session in the fixtures
+        "w": "2026-07-20",   # that Friday closed its week
+        "m": "2026-06-01",   # July is still forming, so June
+    }
+
+    def test_last_closed_is_the_newest_closed_period_at_stooqs_close(self):
+        for ticker, intervals in self.CASES:
+            for iv in intervals:
+                lc = last_closed(pipeline(ticker, iv))
+                stooq_close = load_stooq(ticker, iv)[self.LAST_CLOSED[iv]]["c"]
+                with self.subTest(ticker=ticker, interval=iv):
+                    self.assertEqual(lc.session, D(self.LAST_CLOSED[iv]))
+                    self.assertAlmostEqual(num(lc.close), stooq_close, delta=TOL(stooq_close))
 
     def test_current_month_is_forming(self):
         for ticker in ("PKN", "KGH", "LPP"):

@@ -133,7 +133,8 @@ values; the tests re-assert them on every run.
   KGH 2026-06-22) keep our unadjusted Open/High while Stooq back-adjusts — asserted explicitly, not
   skipped.
 - **Completeness / last_closed** — flags relative to `FROZEN_TODAY` (July month still forming; the
-  just-closed week complete on a Saturday).
+  just-closed week complete on a Saturday); `last_closed` is that newest closed period on every
+  interval, at Stooq's close for it.
 - **Session close** (`TestSessionClose`) — the flag follows the venue's session, not the date: today's
   bar forming during the session, complete after the close and all evening, conservative when the
   vendor omits the trading period, market tz beating machine tz. Weekly/monthly counterparts live in
