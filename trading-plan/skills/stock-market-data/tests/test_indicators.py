@@ -30,7 +30,7 @@ EACH1, EACH2, EACH3 = SessionsEachSide(1), SessionsEachSide(2), SessionsEachSide
 
 def label(b):
     """The ISO date a bar is keyed by in the output: a session, or a period's first day."""
-    return (b.session if hasattr(b, "session") else b.period_start).isoformat()
+    return b.day.isoformat()
 
 
 # --------------------------------------------------------------------------- unit: pure functions
@@ -70,7 +70,7 @@ class TestAggregate(unittest.TestCase):
 
     def test_columns_roll_up_separately(self):
         """A gap in one column does not drop the session from the others: o is the first open
-        present, v sums the volumes present, and a period with no volume at all has none."""
+        present, and a period with no volume at all has none."""
         days = [daily_bar("2026-07-20", None, 12.0, 9.0, 11.0),
                 daily_bar("2026-07-21", 11.0, 13.0, 10.5, 12.5)]
         [b] = aggregate(days, W, D("2026-07-25"))
@@ -155,13 +155,15 @@ class TestATR(unittest.TestCase):
                                        as_of=D("2026-01-07"), interval=None, quality=Quality.GOOD))
         self.assertTrue(a.short_history)                        # 4 TRs < ATR_WARMUP x 2
 
-    def test_short_history_is_read_from_bars_used_not_stored(self):
+    def test_short_history_until_the_runup_is_held(self):
         """A reading cannot say it is settled while holding fewer TRs than the run-up: 5 x 2 TRs
         need 11 candles."""
         def reading(bars_used):
             return AtrReading(n=ATR2, method="wilder", value=1.0, bars_used=bars_used,
                               as_of=D("2026-01-07"), interval=None, quality=Quality.GOOD)
         self.assertEqual((reading(10).short_history, reading(11).short_history), (True, False))
+
+    def test_short_history_is_not_stored(self):
         with self.assertRaises(TypeError):
             AtrReading(n=ATR2, method="wilder", value=1.0, bars_used=11, as_of=D("2026-01-07"),
                        short_history=True, interval=None, quality=Quality.GOOD)
@@ -354,9 +356,9 @@ class TestSwingLows(unittest.TestCase):
         bars = [dataclasses.replace(b, open=None, high=None, close=None) for b in self.HAND]
         self.assertEqual(swing_lows(bars, EACH2).detected, swing_lows(self.HAND, EACH2).detected)
 
-    def test_no_pivot_is_an_empty_list_not_a_missing_key(self):
-        rising = [dataclasses.replace(b, low=price(10 + i), session=D(f"2026-03-{i + 1:02d}"))
-                  for i, b in enumerate(self.HAND)]
+    def test_rising_lows_detect_nothing(self):
+        rising = [daily_bar(f"2026-03-{i + 1:02d}", lo, lo + 1, lo, lo)
+                  for i, lo in enumerate(range(10, 19))]
         self.assertEqual(swing_lows(rising, EACH2).detected, ())
 
     def test_window_matches_atr_so_both_describe_one_stretch(self):
@@ -399,6 +401,8 @@ class TestSwingLows(unittest.TestCase):
     def test_bars_needed_covers_the_window_without_atr(self):
         self.assertEqual(bars_needed(6, None, None), 6)
         self.assertEqual(bars_needed(6, None, EACH2), 71)     # swings alone still widen the fetch
+
+    def test_bars_needed_for_atr_and_swings_is_one_window_not_two(self):
         self.assertEqual(bars_needed(6, ATR14, EACH2), 71)
 
 
