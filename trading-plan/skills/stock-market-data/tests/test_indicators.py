@@ -123,8 +123,8 @@ class TestLastClosed(unittest.TestCase):
         forming = dataclasses.replace(daily[-1], complete=False)
         rec = quote_record([*daily[:-1], forming], "d", 1, FROZEN_DATE)
         self.assertEqual(rec["bars"], [forming])
-        self.assertEqual(rec["last_closed"],
-                         LastClosed(D("2026-07-23"), price("155.86"), Quality.GOOD))
+        before = daily[-2]
+        self.assertEqual(rec["last_closed"], LastClosed(before.session, before.close, Quality.GOOD))
 
 
 # ----------------------------------------------------------- integration: pipeline vs Stooq oracle
@@ -207,6 +207,9 @@ class TestATR(unittest.TestCase):
         self.assertNotEqual(atr_wilder(daily[-20:], ATR14).value, vals[20])
 
     def test_golden_pkn_daily_n14(self):
+        """Regression pin since v0.1, not an independently verified value — the arithmetic rides on
+        the hand tests above. It pins that the whole pipeline still reads PKN to the same ATR, over
+        the 71 sessions (14 x 5 + 1) up to Friday 07-24."""
         a = quote_record(pipeline("PKN", "d"), "d", 6, FROZEN_DATE, ATR14)["atr"]
         self.assertAlmostEqual(a.value, 3.5264, places=4)
         self.assertEqual((a.as_of, a.bars_used, a.interval), (D("2026-07-24"), 71, Interval.DAILY))
@@ -218,7 +221,9 @@ class TestATR(unittest.TestCase):
         self.assertEqual(atr_wilder(daily, ATR14), atr_wilder(daily[-71:], ATR14))
         self.assertEqual(atr_wilder(daily, ATR14).bars_used, 71)
 
-    def test_weekly_runs_on_aggregated_candles(self):
+    def test_golden_pkn_weekly_n14_reads_every_week_of_the_fixture(self):
+        """Regression pin, as the daily one. The fixture's 150 sessions run from Monday 2025-12-15
+        to Friday 07-24: 32 weeks, all closed on Saturday, fewer than the 71 the window allows."""
         a = quote_record(pipeline("PKN", "d"), "w", 6, FROZEN_DATE, ATR14)["atr"]
         self.assertEqual((a.interval, a.as_of, a.bars_used), (Interval.WEEKLY, D("2026-07-20"), 32))
         self.assertAlmostEqual(a.value, 8.8829, places=4)
@@ -494,15 +499,18 @@ class TestPlaceholderSessions(unittest.TestCase):
             sessions_after_in_window=2, lowest_low_in_those_sessions=price(9)),))
         self.assertEqual(s.quality, Quality((D("2026-01-04"), D("2026-01-05"))))
 
+    def last_real(self):
+        """What last_closed should read: Friday 07-17, naming the five placeholders after it."""
+        b = self.clean[-1]
+        return LastClosed(b.session, b.close, Quality(self.left_out))
+
     def test_last_closed_is_the_last_real_session(self):
-        self.assertEqual(last_closed(self.served),
-                         LastClosed(D("2026-07-17"), price("146.2"), Quality(self.left_out)))
+        self.assertEqual(last_closed(self.served), self.last_real())
 
     def test_last_closed_reads_the_whole_series_when_the_slice_is_all_placeholders(self):
         rec = quote_record(self.served, "d", 5, FROZEN_DATE)
         self.assertEqual(sessions(rec["bars"]), self.left_out)
-        self.assertEqual(rec["last_closed"],
-                         LastClosed(D("2026-07-17"), price("146.2"), Quality(self.left_out)))
+        self.assertEqual(rec["last_closed"], self.last_real())
 
     def test_a_week_of_placeholders_stays_in_the_series_with_no_value(self):
         week = aggregate(self.served, W, FROZEN_DATE)[-1]
