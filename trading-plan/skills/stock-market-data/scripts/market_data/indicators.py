@@ -1,24 +1,23 @@
 """Pure functions over bar series: weekly/monthly aggregation, Wilder ATR, swing lows, last close.
 
-Bars are DailyBar (from the port) or PeriodBar (from aggregate), newest last; each function returns
-its reading as a type, which the CLI turns into JSON. Arithmetic runs on floats, as it always has, so
-the numbers do not move. Nothing here fetches or knows a vendor.
+Bars are DailyBar (from the port) or PeriodBar (from aggregate), newest last, read through the
+Candle they both are; each function returns its reading as a type, which the CLI turns into JSON.
+Arithmetic runs on floats, as it always has, so the numbers do not move. Nothing here fetches or
+knows a vendor.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
 from datetime import date
-from typing import Sequence, Union
+from typing import Sequence
 
-from market_data.model import (AtrPeriod, DailyBar, DateRange, Interval, PeriodBar,
+from market_data.model import (AtrPeriod, Candle, DailyBar, DateRange, Interval, PeriodBar,
                                PeriodInterval, Price, Quality, SessionsEachSide, Volume)
 
 ATR_DEFAULT_N = AtrPeriod(14)                   # Wilder's default lookback
 ATR_WARMUP = 5                                  # x n candles of run-up before ATR is settled
 SWING_SESSIONS_DEFAULT = SessionsEachSide(2)    # sessions each side that must have a higher low
-
-Bar = Union[DailyBar, PeriodBar]
 
 
 @dataclass(frozen=True)
@@ -83,45 +82,25 @@ class LastClosed:
     quality: Quality
 
 
-def _day(b: Bar) -> date:
-    """The date a bar is keyed by: its session, or its period's first day."""
-    return b.session if isinstance(b, DailyBar) else b.period_start
-
-
 def _f(p: Price) -> float:
     return float(p.value)
 
 
-def _trusted(b: Bar) -> bool:
-    """A period bar is not vouched for by a source but judged by its quality, read separately."""
-    return not isinstance(b, DailyBar) or b.trust.trusted
-
-
-def _quality(b: Bar) -> Quality:
-    """What a bar leaves out of a value read over it: an untrusted session itself, or whatever a
-    period bar already left out."""
-    if isinstance(b, PeriodBar):
-        return b.quality
-    return Quality.GOOD if b.trust.trusted else Quality((b.session,))
-
-
-def _usable(bars: Sequence[Bar], *fields: str) -> list[int]:
+def _usable(bars: Sequence[Candle], *fields: str) -> list[int]:
     """Indices of the candles a reading may use: closed, trusted, and holding the fields that
     reading needs (each reading names its own, so a gap in one column costs only the readings that
     read it)."""
     return [i for i, b in enumerate(bars)
-            if b.complete and _trusted(b) and all(getattr(b, f) is not None for f in fields)]
+            if b.complete and b.trusted and all(getattr(b, f) is not None for f in fields)]
 
 
-def _window_quality(bars: Sequence[Bar], first: int) -> Quality:
-    """Quality of a reading whose window starts at bars[first]: every closed candle from there to the
-    end of the series, so a gap inside the window and the sessions after the reading's own date are
-    both named. A forming daily candle is left out of a reading anyway, not because it is untrusted,
-    so it names nothing. A forming W1/MN candle is not a reading's value either, but its quality
-    holds only the closed sessions of the period in progress (aggregate already leaves its forming
-    day out), and those ended after the reading's date, so they are named."""
-    return Quality.combine(*(_quality(b) for b in bars[first:]
-                             if b.complete or isinstance(b, PeriodBar)))
+def _window_quality(bars: Sequence[Candle], first: int) -> Quality:
+    """Quality of a reading whose window starts at bars[first]: what every candle from there to the
+    end of the series leaves out, so a gap inside the window and the sessions after the reading's
+    own date are both named. A forming W1/MN candle is not a reading's value, but the closed
+    sessions of its period ended after the reading's date, so they are named too (aggregate already
+    leaves the forming day out)."""
+    return Quality.combine(*(b.quality for b in bars[first:]))
 
 
 def calendar_days(interval, bars):
@@ -179,7 +158,7 @@ def aggregate(daily: Sequence[DailyBar], interval: PeriodInterval,
             close=closes[-1] if closes else None,
             volume=Volume(sum(vols)) if vols else None,
             complete=end < today or (newest is not None and end <= newest and bars[-1].complete),
-            quality=Quality.combine(*(_quality(b) for b in bars if b.complete)),
+            quality=Quality.combine(*(b.quality for b in bars)),
         ))
     return out
 
@@ -209,7 +188,7 @@ def bars_needed(bars: int, atr_n: AtrPeriod | None = None,
     return max(bars, series_window(atr_n))
 
 
-def atr_wilder(bars: Sequence[Bar], n: AtrPeriod = ATR_DEFAULT_N,
+def atr_wilder(bars: Sequence[Candle], n: AtrPeriod = ATR_DEFAULT_N,
                interval: Interval | None = None) -> AtrReading | None:
     """Wilder's ATR(n) over a series (newest last) — or None when there are fewer than n+1 usable
     candles. Method is J. Welles Wilder Jr., New Concepts in Technical Trading Systems (1978):
@@ -236,11 +215,11 @@ def atr_wilder(bars: Sequence[Bar], n: AtrPeriod = ATR_DEFAULT_N,
     for tr in trs[k:]:
         atr = (atr * (k - 1) + tr) / k
     return AtrReading(n=n, method="wilder", value=round(atr, 4), bars_used=len(usable),
-                      as_of=_day(usable[-1]), interval=interval,
+                      as_of=usable[-1].day, interval=interval,
                       quality=_window_quality(bars, idx[0]))
 
 
-def swing_lows(bars: Sequence[Bar], each_side: SessionsEachSide = SWING_SESSIONS_DEFAULT,
+def swing_lows(bars: Sequence[Candle], each_side: SessionsEachSide = SWING_SESSIONS_DEFAULT,
                interval: Interval | None = None,
                atr_n: AtrPeriod | None = None) -> SwingLows | None:
     """Confirmed swing lows over a series (newest last) — or None when the series carries no usable
@@ -269,7 +248,7 @@ def swing_lows(bars: Sequence[Bar], each_side: SessionsEachSide = SWING_SESSIONS
             continue
         lowest_after = min(range(i + 1, len(usable)), key=lows.__getitem__)
         detected.append(SwingLow(
-            session=_day(usable[i]),
+            session=usable[i].day,
             low_price=usable[i].low,
             higher_than_previous_row_low=None if previous_low is None else low > previous_low,
             sessions_after_in_window=len(usable) - i - 1,
@@ -278,13 +257,13 @@ def swing_lows(bars: Sequence[Bar], each_side: SessionsEachSide = SWING_SESSIONS
         previous_low = low
     return SwingLows(
         each_side=each_side,
-        window=DateRange(_day(usable[0]), _day(usable[-1])),
+        window=DateRange(usable[0].day, usable[-1].day),
         window_sessions=len(usable),
-        detectable_through=_day(usable[-(k + 1)]) if len(usable) > k else None,
+        detectable_through=usable[-(k + 1)].day if len(usable) > k else None,
         detected=tuple(detected), interval=interval, quality=_window_quality(bars, idx[0]))
 
 
-def last_closed(bars: Sequence[Bar]) -> LastClosed | None:
+def last_closed(bars: Sequence[Candle]) -> LastClosed | None:
     """Most recent complete, trusted bar with a close — the number the checks want. None if none.
     Its quality names the closed sessions after it that were left out (and, for a W1/MN candle, its
     own). Read over the whole series the caller has, not the slice it shows: a short slice would
@@ -293,4 +272,4 @@ def last_closed(bars: Sequence[Bar]) -> LastClosed | None:
     if not idx:
         return None
     b = bars[idx[-1]]
-    return LastClosed(session=_day(b), close=b.close, quality=_window_quality(bars, idx[-1]))
+    return LastClosed(session=b.day, close=b.close, quality=_window_quality(bars, idx[-1]))

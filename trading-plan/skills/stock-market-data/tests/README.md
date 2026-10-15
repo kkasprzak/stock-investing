@@ -22,7 +22,7 @@ support.py              frozen clock (FROZEN_TODAY, FROZEN_DATE, FROZEN_NOW, GPW
                         float the output prints), FakeSource; puts ../scripts on sys.path
 test_model.py           market_data/model.py — DateRange, Interval, PeriodInterval (its periods), AtrPeriod and
                         SessionsEachSide, Instrument, Isin, Price, Volume, DailyQuote, Trust, Status,
-                        Quality, DailyBar, PeriodBar
+                        Quality, DailyBar, PeriodBar (and each as the Candle the readings see)
 test_store_file.py      market_data/store_file.py — the store's file schema: read, write, merge, StoredQuote
 test_store.py           market_data/adapters/store.py — StoreQuotes: what the store answers (every bar trusted),
                         no_store, malformed, the store ahead of a lower source in a chain
@@ -156,6 +156,10 @@ values; the tests re-assert them on every run.
   `test_store.py`: every store bar is trusted, even one shaped like a placeholder. `TestTrust`,
   `TestQuality`, `TestPeriodBar` (`test_model.py`): an empty reason is rejected; quality is sorted and
   unique, and `uncertain` as soon as it names a session; a period bar without a close is `no_value`.
+  `TestDailyBarAsCandle`, `TestPeriodBarAsCandle`: a daily bar's day is its session and it is
+  trusted as its source says; an untrusted session that ended leaves itself out of a reading, a
+  forming one leaves nothing out; a period bar's day is its first day and it is always trusted,
+  judged by its quality instead.
 - **Quality of readings** — `TestReadingsCarryQuality`: without an untrusted session every reading is
   `good` and every value is the one the golden tests pin. `TestPlaceholderSessions`: ATR and its
   `as_of` equal the ATR on the clean prefix, `uncertain` with the five dates; a gap inside the window
