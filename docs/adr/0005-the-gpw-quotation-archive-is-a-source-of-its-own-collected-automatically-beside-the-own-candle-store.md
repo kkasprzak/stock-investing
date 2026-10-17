@@ -102,7 +102,6 @@ archive unchanged, and a candle that changes after it was collected has to be vi
 ### Import the GPW archive into the own store, as a second importer beside Stooq
 
 * Good, because it fits ADR 0000 as written: one store, filled from more than one source.
-* Good, because the imported sessions get git history (ADR 0001).
 * Bad, because it mixes what a scheduled tool writes with what the user imported by hand, so the
   store stops being the reserve that does not depend on any automatic source.
 
