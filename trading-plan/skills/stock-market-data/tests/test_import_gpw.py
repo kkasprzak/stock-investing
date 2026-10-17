@@ -179,11 +179,6 @@ class TestSessionGpwCorrected(unittest.TestCase):
                                  (c.name, c.currency, c.open, c.high, c.close, c.volume))
                 self.assertLessEqual(c.low, r.low)
 
-    # TODO(sim-fg4): remove @expectedFailure once DailyQuote accepts a low above min(open, close).
-    # Until then DailyQuote refuses ALLEGRO and parse() rejects the page; the rows are pinned as
-    # written by the table() test above. When sim-fg4 lands this test passes, which unittest
-    # reports as an unexpected success and a failed run: that is the reminder to delete the line.
-    @unittest.expectedFailure
     def test_parse_keeps_the_rows_outside_open_and_close_as_written(self):
         session = date(2026, 10, 13)
         got = gpw.parse(page("13-10-2026_fetched-2026-10-15"), session)
