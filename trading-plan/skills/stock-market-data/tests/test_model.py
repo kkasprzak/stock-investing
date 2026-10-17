@@ -185,25 +185,31 @@ class TestDailyQuote(unittest.TestCase):
     def test_accepts_a_flat_session(self):
         q = quote("100", "100", "100", "100")
         self.assertEqual((q.open, q.close), (Price.parse("100"), Price.parse("100")))
+        self.assertIsNone(q.ohlc_breach)
 
     def test_accepts_a_regular_session(self):
-        quote("100", "104", "98", "102")
+        self.assertIsNone(quote("100", "104", "98", "102").ohlc_breach)
 
-    def test_rejects_low_above_open(self):
-        with self.assertRaises(ValueError):
-            quote("100", "104", "101", "102")
+    def test_a_quote_whose_low_or_high_does_not_bracket_open_and_close_exists_and_names_the_breach(self):
+        """A vendor can publish such a row (GPW did, ADR 0005); what to make of it is decided by
+        whoever holds the quote, so the quote states the breach instead of refusing to exist."""
+        for o, h, l, c, breach in (  # noqa: E741
+                ("100", "104", "101", "102", "low 101 is above min(open 100, close 102)"),
+                ("102", "104", "101", "100", "low 101 is above min(open 102, close 100)"),
+                ("105", "104", "98", "102", "high 104 is below max(open 105, close 102)"),
+                ("102", "104", "98", "105", "high 104 is below max(open 102, close 105)")):
+            with self.subTest(o=o, h=h, l=l, c=c):
+                q = quote(o, h, l, c)
+                self.assertEqual((str(q.low), str(q.high)), (l, h))     # kept as given, not fixed
+                self.assertEqual(q.ohlc_breach, breach)
 
-    def test_rejects_low_above_close(self):
-        with self.assertRaises(ValueError):
-            quote("102", "104", "101", "100")
+    def test_a_low_above_the_high_is_a_breach(self):
+        self.assertIsNotNone(quote("100", "99", "101", "100").ohlc_breach)
 
-    def test_rejects_high_below_open(self):
+    def test_prices_and_volume_stay_strict(self):
         with self.assertRaises(ValueError):
-            quote("105", "104", "98", "102")
-
-    def test_rejects_high_below_close(self):
-        with self.assertRaises(ValueError):
-            quote("102", "104", "98", "105")
+            DailyQuote(date(2026, 10, 9), Price.parse("100"), Price.parse("104"),
+                       Price.parse("98"), Price.parse("0"), Volume.parse("1000"))
 
 
 class TestTrust(unittest.TestCase):

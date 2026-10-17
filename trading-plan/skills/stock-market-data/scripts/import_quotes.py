@@ -85,16 +85,11 @@ def main(argv=None, *, today: date | None = None) -> int:
                            "last": incoming[-1].quote.session.isoformat() if incoming else None}}
     if incoming:
         try:
-            existing = store_file.read(path) if path.exists() else []
+            merged = store_file.merge_into(path, incoming)  # the parent was checked above
         except StoreFileError as e:
             return _rejected(f"{e}; the store file was left as it is")
-        merged = store_file.merge(existing, incoming)
-        if merged.added or merged.changed:      # nothing new: leave the file (and its mtime) alone
-            try:
-                store.mkdir(exist_ok=True)      # the parent was checked above; never create it
-                store_file.write(path, merged.rows)
-            except OSError as e:                # --store is a file, no write permission, disk full
-                return _rejected(f"{path}: cannot write: {e}")
+        except OSError as e:                    # --store is a file, no write permission, disk full
+            return _rejected(f"{path}: cannot write: {e}")
         report.update(added=merged.added, unchanged=merged.unchanged, changed=merged.changed,
                       changed_dates=[d.isoformat() for d in merged.changed_dates])
     json.dump(report, sys.stdout, ensure_ascii=False, indent=2)

@@ -8,16 +8,19 @@ Agent-first tool. Output is self-describing JSON (default) — read the keys, no
   python3 quotes.py PLPKN0000018 --atr            # + Wilder ATR(14) on that interval (--atr 20 to override)
   python3 quotes.py PLPKN0000018 --swings         # + confirmed swing lows (2 sessions each side; --swings 3 to override)
   python3 quotes.py PLPKN0000018 --store DIR      # this project's own candle store first, Yahoo after
+  python3 quotes.py PLPKN0000018 --gpw DIR        # the collected GPW archive after the store, before Yahoo
 Input is ISINs only, each checked strictly (no upper-casing, no trimming); a key that is no ISIN
 gets reason invalid_isin and the rest of the run goes on. A broker's ticker is turned into an ISIN
 by symbols.py, never here. Reads recent completed candles for the given instruments: from the own
-candle store (--store, one CSV per ISIN) when given, and from Yahoo (~15 min delayed, its symbol
-from the shared symbols.json map; an ISIN without one is unmapped) for every session the store
-does not have. W1/MN are aggregated
+candle store (--store, one CSV per ISIN) when given, then from the collected GPW quotation archive
+(--gpw, the same format) for every session the store does not have, and from Yahoo (~15 min
+delayed, its symbol from the shared symbols.json map; an ISIN without one is unmapped) for every
+session neither has. W1/MN are aggregated
 from the daily series (Yahoo's native weekly/monthly bars split the current period unreliably). Evaluation/monitoring only —
 execution prices come from the execution venue, not here. A price it can't read is "[NO DATA]".
 Layout: this CLI talks to one QuoteSource port (market_data/ports.py), behind which a QuoteChain asks
-its sources in trust order, each an adapter (market_data/adapters/store.py, then .../yahoo.py).
+its sources in trust order, each an adapter (market_data/adapters/store.py for the own store and
+again for gpw, then .../yahoo.py).
 """
 from __future__ import annotations
 
@@ -46,18 +49,21 @@ DEFAULT_BARS = 6                                # bars returned per symbol
 MAX_PERIOD_DAYS = 365 * 50                      # beyond Yahoo's widest bucket ("max"); keeps timedelta sane
 MIN_PERIOD_DAYS = 9                             # the port's promise: an empty answer never means "weekend"
                                                 # (below Yahoo's smallest bucket, 1mo, so no fetch changes)
+GPW_DESCRIPTION = "GPW quotation archive, collected (one CSV per ISIN)"
 
 
-def build_source(*, store_dir: Path | None = None, fetch=None, opener=urllib.request.urlopen,
-                 sleep=time.sleep) -> QuoteSource:
+def build_source(*, store_dir: Path | None = None, gpw_dir: Path | None = None, fetch=None,
+                 opener=urllib.request.urlopen, sleep=time.sleep) -> QuoteSource:
     """The composition root: which sources answer, in which order. `fetch`, `opener` and `sleep` are
     injectable so tests run offline and unthrottled (see YahooQuotes). Nothing here writes to disk:
     there is no cache (ADR 0004)."""
     yahoo_source = YahooQuotes(fetch=fetch, opener=opener, sleep=sleep)
     # Order on this list = trust hierarchy (ADR 0000, docs/adr/0000-own-candle-store-is-the-most-
-    # trusted-source-of-market-data.md): the own candle store first, Yahoo patches what it lacks.
+    # trusted-source-of-market-data.md; ADR 0005 for gpw): the own candle store first, the
+    # collected GPW archive fills what it lacks, Yahoo patches the rest.
     store = [StoreQuotes(store_dir)] if store_dir is not None else []
-    return QuoteChain([*store, yahoo_source])
+    gpw = [StoreQuotes(gpw_dir, name="gpw", description=GPW_DESCRIPTION)] if gpw_dir is not None else []
+    return QuoteChain([*store, *gpw, yahoo_source])
 
 
 def quote_record(daily, interval, bars, today: date, atr_n: AtrPeriod | None = None,
@@ -170,21 +176,24 @@ def _invalid_isin():
             "value": "[NO DATA]", "unavailable": []}
 
 
-def _store_dir(text: str) -> Path:
-    """--store as given, never created here. A literal `${` is a skill variable Claude Code did not
-    substitute, and a missing parent is most likely an empty one (bash turns ${CLAUDE_PROJECT_DIR}/
-    data/market-data into /data/market-data): reading either as a path would turn a broken setup
-    into an innocent store no_store. The store directory itself missing is a project without one."""
-    if "${" in text:
-        raise argparse.ArgumentTypeError(
-            f"{text!r} holds a variable that was not substituted (literal '${{'); pass the "
-            f"project's real path, e.g. --store /path/to/project/data/market-data")
-    path = Path(text)
-    if not path.parent.exists():
-        raise argparse.ArgumentTypeError(
-            f"parent directory '{path.parent}' does not exist; was ${{CLAUDE_PROJECT_DIR}} "
-            f"substituted?")
-    return path
+def _store_dir(flag: str, example: str):
+    """An argparse type for a store directory flag (--store, --gpw): the path as given, never
+    created here. A literal `${` is a skill variable Claude Code did not substitute, and a missing
+    parent is most likely an empty one (bash turns ${CLAUDE_PROJECT_DIR}/data/market-data into
+    /data/market-data): reading either as a path would turn a broken setup into an innocent
+    no_store. The directory itself missing is a project without that store."""
+    def parse(text: str) -> Path:
+        if "${" in text:
+            raise argparse.ArgumentTypeError(
+                f"{text!r} holds a variable that was not substituted (literal '${{'); pass the "
+                f"project's real path, e.g. {flag} /path/to/project/{example}")
+        path = Path(text)
+        if not path.parent.exists():
+            raise argparse.ArgumentTypeError(
+                f"parent directory '{path.parent}' does not exist; was ${{CLAUDE_PROJECT_DIR}} "
+                f"substituted?")
+        return path
+    return parse
 
 
 def _count(cls, unit):
@@ -218,8 +227,12 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
                     help=f"also report confirmed swing lows on the chosen interval, N sessions each "
                          f"side (bare --swings = {SWING_SESSIONS_DEFAULT}); reads the same window as "
                          f"ATR, so both describe one stretch of history")
-    ap.add_argument("--store", type=_store_dir, default=None, metavar="DIR",
+    ap.add_argument("--store", type=_store_dir("--store", "data/market-data"), default=None,
+                    metavar="DIR",
                     help="this project's own candle store, one CSV per ISIN; asked before Yahoo")
+    ap.add_argument("--gpw", type=_store_dir("--gpw", "data/gpw"), default=None, metavar="DIR",
+                    help="this project's collected GPW quotation archive, one CSV per ISIN; asked "
+                         "after --store and before Yahoo")
     args = ap.parse_args(argv)
 
     index = SymbolIndex(SYMBOLS)
@@ -231,7 +244,7 @@ def main(argv=None, *, source: QuoteSource | None = None, build=build_source,
                MAX_PERIOD_DAYS)
     period = DateRange(end - timedelta(days=days), end)
     if source is None:
-        source = build(store_dir=args.store)
+        source = build(store_dir=args.store, gpw_dir=args.gpw)
     quotes = {}
     for key in args.isins:                          # the output keeps the text the caller passed
         try:

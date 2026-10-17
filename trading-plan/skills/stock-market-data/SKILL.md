@@ -14,14 +14,15 @@ depend on the output contract, not on which source answered.
 ## Run
 
 ```
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PLPKN0000018 LU2237380790 PLPKO0000016   # ISINs, daily
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PLPKN0000018 --interval w     # weekly (W1); m = monthly
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PLPKN0000018 --bars 10        # more history per instrument
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PLPKN0000018 --atr            # + Wilder ATR(14) on that interval (--atr 20 to override)
-python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data PLPKN0000018 --swings         # + confirmed swing lows (2 sessions each side; --swings 3 to override)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data --gpw ${CLAUDE_PROJECT_DIR}/data/gpw PLPKN0000018 LU2237380790 PLPKO0000016   # ISINs, daily
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data --gpw ${CLAUDE_PROJECT_DIR}/data/gpw PLPKN0000018 --interval w     # weekly (W1); m = monthly
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data --gpw ${CLAUDE_PROJECT_DIR}/data/gpw PLPKN0000018 --bars 10        # more history per instrument
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data --gpw ${CLAUDE_PROJECT_DIR}/data/gpw PLPKN0000018 --atr            # + Wilder ATR(14) on that interval (--atr 20 to override)
+python3 ${CLAUDE_SKILL_DIR}/scripts/quotes.py --store ${CLAUDE_PROJECT_DIR}/data/market-data --gpw ${CLAUDE_PROJECT_DIR}/data/gpw PLPKN0000018 --swings         # + confirmed swing lows (2 sessions each side; --swings 3 to override)
 ```
 
-Always pass `--store` exactly as above: it points at this project's own candle store (next section).
+Always pass both `--store` and `--gpw` exactly as above: they point at this project's own candle
+store and its GPW archive store (next sections), asked in that order, then Yahoo.
 A value given to `--atr` or `--swings` must be a whole number of at least 1; anything else exits 2
 before anything is fetched.
 
@@ -29,14 +30,16 @@ Input is **ISIN only**. A broker ticker from a state file is turned into its ISI
 `symbols.py --from xtb` (next section); you never pass a broker's or a provider's symbol. Each key
 is checked as given (lower case or surrounding spaces are invalid, not corrected); one that is no
 ISIN gets `ok:false`, `reason:"invalid_isin"` and the rest of the run goes on. A valid ISIN outside
-the map is still answered by the store; Yahoo, which needs the map's symbol, reports `unmapped`.
+the map is still answered by both stores; Yahoo, which needs the map's symbol, reports `unmapped`.
 `--interval` picks the candle: `d` daily (default), `w` weekly, `m` monthly
 — W1/MN are aggregated from the daily series (open=period start, high/low=extremes, close=period end,
 each over the period's trusted sessions), so they carry the same OHLCV and `complete`/`last_closed`
 semantics as daily, plus a `status` instead of a `source` (Output contract).
 
 There is no cache: every run asks its sources afresh, and what is worth keeping lives in the own
-candle store.
+candle store. The GPW archive store is not a cache either: GPW cannot be asked for an instrument's
+history, only for one whole session at a time, so the collected sessions are the only form in
+which that source can be read.
 
 ## Instrument names (`scripts/symbols.py`)
 
@@ -68,14 +71,14 @@ offered: it belongs to that vendor's adapter.
 ## Own candle store (required per project)
 
 The store is this project's own record of closed daily candles, one CSV file per ISIN, filled only
-by import and asked before Yahoo, which only fills what the store lacks.
+by import and asked first: the GPW archive store and Yahoo only fill what it lacks.
 
 - **Every project that uses this skill has its own store**, under `data/market-data/` in that
   project's repository. There is no global store. The `Run` lines point at it.
 - `unavailable: [{source: "store", reason: "no_store"}]` on every record means this project has no
-  store yet: do the first import (below). Until then the bars come from Yahoo alone. `quotes.py`
-  exiting 2 with "parent directory ... does not exist" means `--store` did not point into the
-  project (an empty `${CLAUDE_PROJECT_DIR}` gives `/data/market-data`): fix the path, do not import.
+  store yet: do the first import (below). Until then the bars come from the GPW archive store and
+  Yahoo. `quotes.py` exiting 2 with "parent directory ... does not exist" means `--store` did not
+  point into the project (an empty `${CLAUDE_PROJECT_DIR}` gives `/data/market-data`): fix the path, do not import.
 - **Feeding it** — one export per instrument, named by its ISIN like `quotes.py` (it need not be in
   the map):
 
@@ -107,6 +110,65 @@ by import and asked before Yahoo, which only fills what the store lacks.
   outage shows in `unavailable`. Yahoo is split-adjusted and the "skip splits" export is not, so a
   split after the last import breaks continuity between store and Yahoo bars until the next import.
 
+## GPW archive store (one per project)
+
+The GPW archive store is this project's copy of the exchange's own quotation archive: each session
+as GPW published it, for the whole GPW equity market, one CSV file per ISIN in the own store's
+format, with `source` `gpw`. Prices are unadjusted; volume is GPW's final figure for the session,
+which on some days exceeds every other provider's by a round lot (block trades, most likely). It
+holds the sessions collected since the project started collecting;
+older history is the own store's. It is asked after the own store and before Yahoo, so it fills
+the GPW sessions nobody imported by hand, and Yahoo is left with names not listed on GPW, today's
+session before GPW publishes it, and any day not collected.
+
+- It lives under `data/gpw/`, beside `data/market-data/`, in the project's repository. The `Run`
+  lines point at it.
+- **It is filled by a collector on the project's schedule, never by you.** `unavailable: [{source:
+  "gpw", reason: "no_store"}]` on every record means this project has no `data/gpw/` yet: the bars
+  come from the own store and Yahoo, and the run is otherwise fine. Do **not** create the directory
+  and do **not** run the collector to make it go away: setting the store up is done once per
+  project, by its owner. `quotes.py` exiting 2 with "parent directory ... does not exist" means the
+  same as for `--store`: fix the path.
+- **A session goes to the first source that has it, even when that source does not vouch for it.**
+  A bar with `source: "gpw"`, `trusted:false`, `untrusted_reason:"inconsistent_ohlc"` is a session
+  GPW published with its low or high outside the open–close range (seen for nine liquid names on
+  2026-10-13, which GPW itself corrected days later). It is shown as published, and Yahoo's bar for
+  that date is discarded, not used in its place. The fix is a hand Stooq import of that instrument
+  into the own store, which wins the day.
+- **Volume can mix two kinds in one series.** A day from the own store carries the volume of an
+  evening snapshot (Stooq's export); a day from `gpw` carries GPW's final volume, which on some
+  days is larger (by a round lot: block trades, most likely). The own store wins every day it has,
+  so the two kinds can sit side by side in one instrument's bars.
+- Rows GPW lists with volume 0 are not sessions and are never collected: such a day is a gap in
+  `gpw`, and a lower source may fill it.
+- GPW may correct a published session days later. A session collected again (`--date`) picks the
+  correction up; the project's `git diff` shows what changed.
+- **Collecting** — one run collects one session, the whole market in one request: today's, or the
+  one named by `--date`. The project's schedule runs it (a launchd job on the owner's machine, some
+  time after GPW publishes the evening's session); the schedule is the project's, not this skill's.
+
+  ```
+  python3 ${CLAUDE_SKILL_DIR}/scripts/collect_gpw.py --gpw ${CLAUDE_PROJECT_DIR}/data/gpw                     # today's session
+  python3 ${CLAUDE_SKILL_DIR}/scripts/collect_gpw.py --gpw ${CLAUDE_PROJECT_DIR}/data/gpw --date 2026-10-16   # that session: a day missed or collected too early
+  ```
+
+  It prints a JSON report: `{session, fetched_at, dir, empty, rows, skipped_volume_0, added,
+  unchanged, changed, changed_isins[]}`. A session collected again where GPW gives the same quote
+  is left alone, so a re-run rewrites no file; `changed` > 0 means GPW now reads differently for
+  sessions already collected: `changed_isins` names them. An empty page — a day without a session,
+  or one GPW has not published yet; the two look the same — writes nothing (`empty: true`, exit 0).
+  The directory appears only with the first write, and only under a parent that already exists.
+  Exit 1: the page no longer reads as the archive did, a file in the store is broken, or `--gpw` is
+  a file, and nothing is written; or a file cannot be written (no permission, disk full), and the
+  files before it were: the same `--date` run again after the fix completes the session. Exit 2:
+  bad arguments, a weekend, a date after today, a `--gpw` still holding a literal `${` or whose
+  parent does not exist; nothing is fetched. Exit 3: the archive gave no page, and nothing is
+  written. The server often resets the connection, so the request is tried three times, 30 s
+  apart; it also needs a browser's User-Agent, Accept-Language and Accept, without which it refuses
+  or resets the request.
+- **Committing the store is the owner's step**; the collector never runs git. The project's
+  `.gitattributes` should carry `data/gpw/*.csv text eol=lf`.
+
 ## Output contract
 
 Self-describing JSON to stdout: a header `source` describing the chain that was asked — each
@@ -116,8 +178,11 @@ excluded_sessions}` + `bars[]`, or `ok:false` + `reason` + `unavailable` + `valu
 
 A daily bar in `bars[]` is `{date, o, h, l, c, v, complete, source, trusted}`, plus
 `untrusted_reason` only when `trusted` is `false`. `source` is the name of the source that supplied
-it: `store` (this project's own candle store) or `yahoo`. `trusted` says whether that source vouches
-for the session: the store always does; Yahoo marks a **placeholder** (`o == h == l == c` and volume
+it: `store` (this project's own candle store), `gpw` (its GPW archive store) or `yahoo`. `trusted`
+says whether that source vouches for the session: both stores do, except for a session whose low or
+high lies outside its open–close range, `untrusted_reason:"inconsistent_ohlc"` (in the own store
+only after a hand edit of its file, since the import refuses such a row); Yahoo marks a
+**placeholder** (`o == h == l == c` and volume
 0 or missing, a session it filled in rather than one that traded) `trusted:false`,
 `untrusted_reason:"placeholder"`, and a session where it sent an open, high, low or close that is
 no price (0, negative, not finite) `untrusted_reason:"unusable_price"`, with that field `null`; a
@@ -139,8 +204,10 @@ left out is too much is the consumer's call. Each carries both keys, always:
   no values to its period and is not named. A W1/MN period holding only that bar still appears, as
   a `no_value` candle with `o/h/l/c/v` `null`, `complete:false` and `excluded_sessions:[]`.
 
-`unavailable: [{source, reason}]` lists the sources that did not answer (`store`, `yahoo`); an
-`ok:true` record carries it only when some source did not answer. Yahoo's reasons: `unmapped` (the
+`unavailable: [{source, reason}]` lists the sources that did not answer (`store`, `gpw`, `yahoo`);
+an `ok:true` record carries it only when some source did not answer. The stores' reasons:
+`no_store` (the project has no such directory) and `malformed` (the instrument's file there cannot
+be read; the file and line are on stderr). Yahoo's reasons: `unmapped` (the
 map gives this ISIN no Yahoo symbol, so Yahoo was not asked), `not_found` (no such symbol),
 `rate_limited` (still throttled after its retries), `network_error` (no
 connection, a timeout), `bad_response` (an answer that is not a chart), `http_<code>` (any other
@@ -183,7 +250,8 @@ nothing is not a failure: no bars and no `unavailable` stays `ok:true`.
   never `false`. **Every** confirmed low is reported, lower ones included — which one a stop may
   anchor to is the caller's rule, not this layer's. No pivot in the window → `detected: []`.
 - Bars with `source: "yahoo"` are **delayed (~15 min)** — recent, not real-time. Bars with
-  `source: "store"` are closed sessions as of the last import.
+  `source: "store"` are closed sessions as of the last import, and with `source: "gpw"` as of the
+  last collection.
 - A price it can't read is `[NO DATA]`, never inferred. One bad key never fails the others.
 
 ## Gotchas
@@ -204,7 +272,7 @@ nothing is not a failure: no bars and no `unavailable` stays `ok:true`.
 - **A day without trades on an illiquid instrument looks like a placeholder** (ETFs, small caps:
   one price all day, no volume) and is left out the same way, so ATR reads slightly higher than
   through 0.5.0, and an instrument without a store can stay `uncertain` for good. The cure is
-  importing it into the store, whose sessions are always trusted. The same holds for Yahoo's GPW
+  importing it into the store, whose imported sessions are always trusted. The same holds for Yahoo's GPW
   history: it carries flat zero-volume bars on exchange holidays (seen 2017–2020, e.g. 2020-11-11),
   so an MN reading whose window reaches back that far is `uncertain` and names those dates (a
   store whose history starts later does not cover them), while

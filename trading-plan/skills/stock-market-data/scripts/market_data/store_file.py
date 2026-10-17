@@ -2,7 +2,9 @@
 
 <ISIN>.csv, header HEADER, LF line endings, UTF-8 without a BOM; rows ascending by a unique date,
 working days only, closed sessions only. date is ISO, prices are str(Price), volume is
-str(Volume), source is the provider of the row (e.g. "stooq").
+str(Volume), source is the provider of the row (e.g. "stooq"). A row whose low and high do not
+bracket its open and close is part of the format (GPW publishes such sessions, ADR 0005): the file
+keeps it as written, and whoever serves it judges it.
 """
 from __future__ import annotations
 
@@ -136,6 +138,22 @@ def merge(existing, incoming) -> MergeResult:
         rows[session] = new
     return MergeResult(tuple(rows[s] for s in sorted(rows)), added, unchanged, len(changed_dates),
                        tuple(sorted(changed_dates)))
+
+
+def merge_into(path: Path, incoming) -> MergeResult:
+    """The incoming rows merged into the file at path, the one way rows enter a store (the
+    importer and the GPW collector both write through here). The file is read if it exists, and
+    written only when a session was added or changed: nothing new leaves it, and its mtime, alone.
+    Its directory is created when missing, never that directory's parent (an unsubstituted project
+    path must fail, not grow a tree). Raises StoreFileError for a stored file that breaks the
+    schema and OSError for one that cannot be written; either way the file is left as it was."""
+    path = Path(path)
+    existing = read(path) if path.exists() else []
+    merged = merge(existing, incoming)
+    if merged.added or merged.changed:
+        path.parent.mkdir(exist_ok=True)
+        write(path, merged.rows)
+    return merged
 
 
 def write(path: Path, rows) -> None:

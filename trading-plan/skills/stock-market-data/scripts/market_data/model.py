@@ -88,9 +88,10 @@ class Volume:
 
 @dataclass(frozen=True)
 class DailyQuote:
-    """The quote of one closed session. A quote that breaks the OHLC rules does not exist. Weekends
-    are not its rule: that is exchange-calendar knowledge, checked where files are read and
-    imported."""
+    """The quote of one closed session, as its vendor published it. A quote whose low and high do
+    not bracket its open and close still exists (GPW publishes such sessions, ADR 0005) and names
+    the breach in ohlc_breach; whoever holds it decides what that means. Weekends are not its rule
+    either: that is exchange-calendar knowledge, checked where files are read and imported."""
 
     session: date
     open: Price
@@ -99,14 +100,16 @@ class DailyQuote:
     close: Price
     volume: Volume
 
-    def __post_init__(self) -> None:
+    @property
+    def ohlc_breach(self) -> str | None:
+        """The OHLC rule this quote breaks, in words, or None when its low and high bracket its open
+        and close (a low above the high always breaks one of the two)."""
         o, h, l, c = self.open.value, self.high.value, self.low.value, self.close.value  # noqa: E741
         if l > min(o, c):
-            raise ValueError(f"{self.session}: low {self.low} is above min(open {self.open}, "
-                             f"close {self.close})")
+            return f"low {self.low} is above min(open {self.open}, close {self.close})"
         if h < max(o, c):
-            raise ValueError(f"{self.session}: high {self.high} is below max(open {self.open}, "
-                             f"close {self.close})")
+            return f"high {self.high} is below max(open {self.open}, close {self.close})"
+        return None
 
 
 @dataclass(frozen=True)

@@ -125,8 +125,10 @@ def _records(path: Path):
 
 def parse(path: Path) -> list[StoredQuote]:
     """Every row of a Stooq daily export as a store row; the first problem rejects the whole file.
-    Prices are snapped first and validated after (Price, then the OHLC rules of DailyQuote): the
-    noise can put a low a hair above the close, and the snapped value is the one that is stored."""
+    Prices are snapped first and validated after (Price, then the OHLC rules): the noise can put a
+    low a hair above the close, and the snapped value is the one that is stored. A row that still
+    breaks the OHLC rules is a broken export, not a session; the store file would read it (it holds
+    such rows for GPW), so this is where it is kept out of the own store."""
     out = []
     for line, session, prices, volume in _records(path):
         try:
@@ -134,5 +136,7 @@ def parse(path: Path) -> list[StoredQuote]:
             quote = DailyQuote(session, o, h, l, c, Volume.parse(volume))
         except ValueError as e:
             raise StooqFormatError(line, str(e)) from None
+        if quote.ohlc_breach:
+            raise StooqFormatError(line, f"{session}: {quote.ohlc_breach}")
         out.append(StoredQuote(quote, SOURCE))
     return out

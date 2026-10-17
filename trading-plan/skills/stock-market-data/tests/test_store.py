@@ -10,12 +10,14 @@ import io
 import shutil
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from support import FX, FakeSource, flat_bar, num
 from market_data.adapters.store import StoreQuotes
-from market_data.model import DailyBar, DateRange, Instrument, Isin, Price, Trust, Volume
+from market_data.indicators import atr_wilder, swing_lows
+from market_data.model import (AtrPeriod, DailyBar, DateRange, Instrument, Isin, Price, Quality,
+                               SessionsEachSide, Status, Trust, Volume)
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 from market_data.quote_chain import QuoteChain
@@ -26,10 +28,20 @@ PEO = Instrument(isin=Isin.parse("PLPEKAO00016"), symbols={"yahoo": "PEO.WA"})
 PERIOD = DateRange(date(2026, 9, 28), date(2026, 10, 12))
 NOW = 1791000000.0                             # unused by the store; the port requires it
 PKN_RESOLVED = (Resolution("store", "PLPKN0000018", ResolvedBy.ISIN),)
+INCONSISTENT_OHLC = Trust.untrusted("inconsistent_ohlc")
 
 
 def dates(series):
     return [b.session.isoformat() for b in series.bars]
+
+
+def store_with(test, *rows: str) -> Path:
+    """A temp store directory holding PKN's file with these data rows under the header."""
+    tmp = Path(tempfile.mkdtemp())
+    test.addCleanup(shutil.rmtree, tmp, True)
+    (tmp / "PLPKN0000018.csv").write_text("date,open,high,low,close,volume,source\n"
+                                          + "".join(f"{r}\n" for r in rows))
+    return tmp
 
 
 class TestStoreQuotes(unittest.TestCase):
@@ -72,16 +84,48 @@ class TestStoreQuotes(unittest.TestCase):
         s = StoreQuotes(STORE).daily(PEO, PERIOD, now=NOW)
         self.assertEqual(s, QuoteSeries((), (Resolution("store", "PLPEKAO00016", ResolvedBy.ISIN),)))
 
-    def test_every_bar_is_trusted_even_one_shaped_like_a_vendor_placeholder(self):
+    def test_a_bar_shaped_like_a_vendor_placeholder_is_trusted(self):
         """Only closed sessions someone imported are stored (ADR 0000): the store vouches for each.
         A flat row with no volume is Yahoo's placeholder shape, and that rule is Yahoo's alone."""
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, True)
-        (tmp / "PLPKN0000018.csv").write_text("date,open,high,low,close,volume,source\n"
-                                              "2026-10-08,107,107,107,107,0,stooq\n"
-                                              "2026-10-09,103,108,102,107.50,1500000,stooq\n")
+        tmp = store_with(self, "2026-10-08,107,107,107,107,0,stooq",
+                         "2026-10-09,103,108,102,107.50,1500000,stooq")
         s = StoreQuotes(tmp).daily(PKN, PERIOD, now=NOW)
         self.assertEqual([b.trust for b in s.bars], [Trust.TRUSTED, Trust.TRUSTED])
+
+    def test_a_row_whose_low_or_high_does_not_bracket_open_and_close_is_served_untrusted(self):
+        """Served as stored, neither dropped nor corrected, untrusted with a reason that names the
+        rule; every other row stays trusted."""
+        tmp = store_with(self, "2026-10-06,101,103,99,102,700000,stooq",
+                         "2026-10-07,102,104,103,102.5,800000,stooq",     # low above the open
+                         "2026-10-08,101,103.50,99,103,800000,stooq",
+                         "2026-10-09,103,106,102,107.50,1500000,stooq")   # high below the close
+        s = StoreQuotes(tmp).daily(PKN, PERIOD, now=NOW)
+        self.assertEqual([(b.session.isoformat(), b.trust) for b in s.bars],
+                         [("2026-10-06", Trust.TRUSTED), ("2026-10-07", INCONSISTENT_OHLC),
+                          ("2026-10-08", Trust.TRUSTED), ("2026-10-09", INCONSISTENT_OHLC)])
+        self.assertEqual(s.bars[1], DailyBar(date(2026, 10, 7), Price.parse("102"),
+                                             Price.parse("104"), Price.parse("103"),
+                                             Price.parse("102.5"), Volume(800000), complete=True,
+                                             source="store", trust=INCONSISTENT_OHLC))
+
+    def test_atr_and_swing_lows_over_such_a_row_are_uncertain_and_name_its_date(self):
+        """The readings already leave untrusted sessions out; this proves the store's new reason
+        reaches them like any other."""
+        days = [date(2026, 9, 1) + timedelta(days=i) for i in range(42)]
+        days = [d for d in days if d.weekday() < 5]                      # 09-01 .. 10-12
+        rows = []
+        for i, d in enumerate(days):
+            c = 100 + (i * 7) % 11                                       # a close that moves
+            o, h, l = c - 1, c + 2, c - 3  # noqa: E741
+            if d == date(2026, 10, 6):
+                l = c + 0.5  # noqa: E741                              # low above open and close
+            rows.append(f"{d.isoformat()},{o},{h},{l},{c},{1000 + i},stooq")
+        bars = StoreQuotes(store_with(self, *rows)).daily(PKN, PERIOD, now=NOW).bars
+        atr, swings = atr_wilder(bars, AtrPeriod(14)), swing_lows(bars, SessionsEachSide(2))
+        self.assertEqual((atr.quality, atr.quality.status),
+                         (Quality((date(2026, 10, 6),)), Status.UNCERTAIN))
+        self.assertEqual((swings.quality, swings.quality.status),
+                         (Quality((date(2026, 10, 6),)), Status.UNCERTAIN))
 
     def test_an_instrument_outside_the_symbol_map_is_answered_by_its_isin(self):
         """The file is named by the ISIN: the store needs no symbol from the map."""
@@ -118,6 +162,56 @@ class TestStoreDidNotAnswer(unittest.TestCase):
         self.assertEqual(caught.exception.resolved, PKN_RESOLVED)
         self.assertTrue(err.getvalue().startswith(f"{path}:2: "), err.getvalue())
         self.assertIn("Saturday", err.getvalue())
+
+
+class TestAStoreDirectoryUnderAnotherName(unittest.TestCase):
+    """The same adapter serves any directory in the store's format under the name and description
+    it is given: the GPW quotation archive is one (ADR 0005). Everything the store says, it says
+    under that name."""
+
+    GPW = dict(name="gpw", description="GPW quotation archive")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_without_a_name_it_is_the_own_store(self):
+        source = StoreQuotes(STORE)
+        self.assertEqual((source.name, source.description),
+                         ("store", "own candle store (one CSV per ISIN)"))
+
+    def test_it_is_named_and_described_as_given(self):
+        source = StoreQuotes(STORE, **self.GPW)
+        self.assertEqual((source.name, source.description), ("gpw", "GPW quotation archive"))
+        self.assertEqual(StoreQuotes.name, "store")          # the class itself is not renamed
+
+    def test_bars_and_resolution_carry_the_name(self):
+        s = StoreQuotes(STORE, **self.GPW).daily(PKN, PERIOD, now=NOW)
+        self.assertEqual({b.source for b in s.bars}, {"gpw"})
+        self.assertEqual(s.resolved, (Resolution("gpw", "PLPKN0000018", ResolvedBy.ISIN),))
+
+    def test_a_row_whose_low_does_not_bracket_open_and_close_is_untrusted_under_the_name(self):
+        """The 2026-10-13 shape: GPW's low above the open and close, served as published."""
+        tmp = store_with(self, "2026-10-09,103,108,102,107.50,1500000,gpw",
+                         "2026-10-12,107,109,107.80,108,900000,gpw")
+        s = StoreQuotes(tmp, **self.GPW).daily(PKN, PERIOD, now=NOW)
+        self.assertEqual([(b.source, b.trust) for b in s.bars],
+                         [("gpw", Trust.TRUSTED), ("gpw", INCONSISTENT_OHLC)])
+
+    def test_missing_directory_is_no_store_under_the_name(self):
+        with self.assertRaises(QuoteSourceUnavailableError) as caught:
+            StoreQuotes(self.tmp / "missing", **self.GPW).daily(PKN, PERIOD, now=NOW)
+        self.assertEqual(caught.exception.failures, (SourceFailure("gpw", "no_store"),))
+
+    def test_broken_file_is_malformed_under_the_name(self):
+        (self.tmp / "PLPKN0000018.csv").write_bytes(b"date,open,high,low,close,volume,source\n"
+                                                    b"2026-10-10,103,108,102,107.50,1500000,gpw\n")
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(QuoteSourceUnavailableError) as caught:
+            StoreQuotes(self.tmp, **self.GPW).daily(PKN, PERIOD, now=NOW)
+        self.assertEqual(caught.exception.failures, (SourceFailure("gpw", "malformed"),))
+        self.assertEqual(caught.exception.resolved,
+                         (Resolution("gpw", "PLPKN0000018", ResolvedBy.ISIN),))
 
 
 class TestStoreInAChain(unittest.TestCase):
