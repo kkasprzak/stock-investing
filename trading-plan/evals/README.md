@@ -82,6 +82,28 @@ both directions, including a full known-bad answer: 36 of 36 votes, about a cent
 The lesson generalises: calibrate a judge on what it will actually be shown. A calibration that
 hands it a trimmed excerpt is an easier test than the real one, and passes judges that will not.
 
+## Calibrating a judge
+
+An `llm` grader is a prompt for a judge model, and a judge can be wrong without saying so. Before
+a green run says anything about the skill, show the judge samples whose verdict you already know:
+
+```
+make calibrate GRADER=stop-side           # 3 votes per sample, about a cent a vote
+make calibrate GRADER=stop-side VOTES=5
+python3 trading-plan/evals/scripts/calibrate_judge.py stop-side --dry-run    # check the files, print one prompt, no model calls
+```
+
+`calibration/<grader>/` holds the samples (`S1.txt` — an output of the skill, with the line under
+test changed) and `expected.tsv` (`S1<TAB>PASS`), the one place the expected verdicts live. The
+directory's name is the grader's file name. The script exits 1 if any vote disagrees, 2 if a sample
+and the manifest do not match, and reports a vote that said both PASS and FAIL — the judge changed
+its mind, which the runner, asking for one word, would not show.
+
+Run it when a criterion is new or edited, when `JUDGE_MODEL` changes, and when a fixture changes (the
+layer-2 judges carry its numbers). The best samples are real outputs of the skill, spoiled in one
+place. It approximates the runner — it asks the judge directly, with our wording — so the runner
+stays the final check: set a constant so that a real output must fail, and see the grader go red.
+
 ## Layout
 
 ```

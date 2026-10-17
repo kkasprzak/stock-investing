@@ -10,4 +10,5 @@ KTY.PL fixture is 1204.
 | S4.txt | 1174, a real model output verbatim | PASS |
 | S5.txt | 1230, S4 with the stop moved | FAIL |
 
-S1–S3 are built on `stop-differs/A.txt`. No `case.yaml` here, the runner ignores this directory.
+S1–S3 are built on `stop-differs/A.txt`. The verdicts the script checks live in `expected.tsv`; the table above is for reading.
+Run `make calibrate GRADER=stop-side`. No `case.yaml` here, the runner ignores this directory.

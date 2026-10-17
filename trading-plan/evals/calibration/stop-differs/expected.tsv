@@ -1,0 +1,5 @@
+# sample	expected verdict (PASS or FAIL). The judge is run on each sample; see scripts/calibrate_judge.py
+A	PASS
+B	FAIL
+C	PASS
+D	FAIL

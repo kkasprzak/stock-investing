@@ -9,4 +9,5 @@ fixture; only `invalidation`, `technical_stop`, `note` differ between them.
 | C.txt | 1195 / 1195 | says the structure leaves no room | PASS |
 | D.txt | 1195 / 1195 | explains something unrelated | FAIL |
 
-Not part of any case: no `case.yaml` here, the runner ignores this directory.
+The verdicts the script checks live in `expected.tsv`; the table above is for reading.
+Run `make calibrate GRADER=stop-differs`. No `case.yaml` here, the runner ignores this directory.

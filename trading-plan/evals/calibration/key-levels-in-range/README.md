@@ -12,4 +12,5 @@ range in the KTY.PL fixture is 658.5-1362.
 | K6.txt | K4 plus `620 (Oct 2023 low)`, a price next to a date | FAIL |
 
 K4 is the realistic one: the judge has to tell prices from `Aug 20` and `Sep 3`.
-No `case.yaml` here, the runner ignores this directory.
+The verdicts the script checks live in `expected.tsv`; the table above is for reading.
+Run `make calibrate GRADER=key-levels-in-range`. No `case.yaml` here, the runner ignores this directory.
