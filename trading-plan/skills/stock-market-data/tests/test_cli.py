@@ -67,6 +67,34 @@ class TestBuildSource(unittest.TestCase):
                           (date(2026, 7, 24), price(1), "store")])
         self.assertEqual(len(self.calls), 1)
 
+    def test_with_a_store_and_gpw_the_order_is_store_gpw_yahoo(self):
+        """On a date all three have, the store's bar comes; on one only gpw and Yahoo have, gpw's."""
+        header = "date,open,high,low,close,volume,source\n"
+        store_dir, gpw_dir = self.tmp / "store", self.tmp / "gpw"
+        store_dir.mkdir()
+        gpw_dir.mkdir()
+        (store_dir / "PLPKN0000018.csv").write_text(header + "2026-07-24,1,1,1,1,7,stooq\n")
+        (gpw_dir / "PLPKN0000018.csv").write_text(header + "2026-07-23,2,2,2,2,7,gpw\n"
+                                                           "2026-07-24,3,3,3,3,7,gpw\n")
+        source = quotes.build_source(store_dir=store_dir, gpw_dir=gpw_dir, fetch=self.fetch,
+                                     sleep=lambda s: None)
+        bars = source.daily(PKN, PERIOD, now=FROZEN_NOW).bars
+        self.assertEqual([(b.session, b.close, b.source) for b in bars[-3:]],
+                         [(bars[-3].session, bars[-3].close, "yahoo"),
+                          (date(2026, 7, 23), price(2), "gpw"),
+                          (date(2026, 7, 24), price(1), "store")])
+
+    def test_gpw_without_a_store_comes_before_yahoo(self):
+        gpw_dir = self.tmp / "gpw"
+        gpw_dir.mkdir()
+        (gpw_dir / "PLPKN0000018.csv").write_text(
+            "date,open,high,low,close,volume,source\n2026-07-24,3,3,3,3,7,gpw\n")
+        source = quotes.build_source(gpw_dir=gpw_dir, fetch=self.fetch, sleep=lambda s: None)
+        self.assertEqual(source.description, "GPW quotation archive, collected (one CSV per ISIN)"
+                                             " > Yahoo Finance v8 chart (~15 min delayed)")
+        bars = source.daily(PKN, PERIOD, now=FROZEN_NOW).bars
+        self.assertEqual((bars[-1].session, bars[-1].source), (date(2026, 7, 24), "gpw"))
+
     def test_opener_and_sleep_reach_yahoo(self):
         """Without a fake fetch, Yahoo's own fetch goes through the given opener and sleep."""
         urls, sleeps = [], []
@@ -142,8 +170,8 @@ class TestMain(unittest.TestCase):
             "2026-07-24,2,3,2,3,8,stooq\n")
         fetched, slept = [], []
 
-        def build(*, store_dir=None):
-            return quotes.build_source(store_dir=store_dir,
+        def build(**dirs):
+            return quotes.build_source(**dirs,
                                        fetch=lambda sym, rng: fetched.append(sym),
                                        sleep=slept.append)
 
@@ -168,8 +196,8 @@ class TestMain(unittest.TestCase):
         store_dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, store_dir, True)
 
-        def build(*, store_dir=None):
-            return quotes.build_source(store_dir=store_dir,
+        def build(**dirs):
+            return quotes.build_source(**dirs,
                                        fetch=lambda sym, rng: (load_yahoo("PKN"), None),
                                        sleep=lambda s: None)
 
@@ -469,8 +497,8 @@ class TestPlaceholderSessionsEndToEnd(unittest.TestCase):
     def output(self, *argv):
         response = self.yahoo_response()
 
-        def build(*, store_dir=None):
-            return quotes.build_source(store_dir=store_dir,
+        def build(**dirs):
+            return quotes.build_source(**dirs,
                                        fetch=lambda sym, rng: (response, None),
                                        sleep=lambda s: None)
 
@@ -499,6 +527,87 @@ class TestPlaceholderSessionsEndToEnd(unittest.TestCase):
         self.assertEqual(week, {"date": "2026-10-05", "o": None, "h": None, "l": None, "c": None,
                                 "v": None, "complete": True, "status": "no_value",
                                 "excluded_sessions": [d.isoformat() for d in self.GAP]})
+
+
+class TestGpwEndToEnd(unittest.TestCase):
+    """--store and --gpw over temp directories, Yahoo behind them, the way the CLI meets them. The
+    2026-10-13 shape: GPW published a low above the open and close for a session with trades, and
+    Yahoo has a normal, trusted bar for that date."""
+
+    HEADER = "date,open,high,low,close,volume,source\n"
+    YAHOO_DAYS = [date(2026, 10, 8), date(2026, 10, 9), date(2026, 10, 12), date(2026, 10, 13)]
+    YAHOO_CLOSES = [70, 71, 72, 73]
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store, self.gpw = self.tmp / "store", self.tmp / "gpw"
+        self.store.mkdir()
+        self.gpw.mkdir()
+        (self.store / "PLPKN0000018.csv").write_text(self.HEADER + "2026-10-09,49,52,48,50,900,stooq\n")
+        (self.gpw / "PLPKN0000018.csv").write_text(
+            self.HEADER + "2026-10-09,59,62,58,60,950,gpw\n"
+                          "2026-10-12,60,62,59,61,800,gpw\n"
+                          "2026-10-13,62,64,62.50,62.20,700,gpw\n")    # low above open and close
+
+    def yahoo_response(self):
+        c = self.YAHOO_CLOSES
+        return {"meta": {"gmtoffset": 7200, "symbol": "PKN.WA"},
+                "timestamp": [warsaw(d.year, d.month, d.day, 9 * 3600) for d in self.YAHOO_DAYS],
+                "indicators": {"quote": [{"open": [x - 1 for x in c], "high": [x + 2 for x in c],
+                                          "low": [x - 3 for x in c], "close": c,
+                                          "volume": [1000] * len(c)}]}}
+
+    def run_cli(self, *argv):
+        response, self.fetched = self.yahoo_response(), []
+
+        def fetch(sym, rng):
+            self.fetched.append(sym)
+            return response, None
+
+        def build(**dirs):
+            return quotes.build_source(**dirs, fetch=fetch, sleep=lambda s: None)
+
+        return run([*argv, PKN_ISIN, "--bars", "4"], build=build, today=date(2026, 10, 14))
+
+    @staticmethod
+    def shown(rec):
+        return [(b["date"], b["c"], b["source"], b["trusted"], b.get("untrusted_reason"))
+                for b in rec["bars"]]
+
+    def test_store_wins_gpw_fills_what_the_store_lacks_and_yahoo_the_rest(self):
+        rec = self.run_cli("--store", str(self.store), "--gpw", str(self.gpw))["quotes"][PKN_ISIN]
+        self.assertEqual(self.shown(rec),
+                         [("2026-10-08", 70.0, "yahoo", True, None),
+                          ("2026-10-09", 50.0, "store", True, None),
+                          ("2026-10-12", 61.0, "gpw", True, None),
+                          ("2026-10-13", 62.2, "gpw", False, "inconsistent_ohlc")])
+        self.assertNotIn("unavailable", rec)
+
+    def test_an_untrusted_gpw_day_is_shown_untrusted_and_yahoos_trusted_bar_is_not_used(self):
+        """Yahoo is fetched (the chain asks every source for the whole period) but its trusted
+        10-13 bar never shows: the date belongs to gpw, untrusted, and the last closed session
+        leaves it out instead of reading Yahoo's."""
+        rec = self.run_cli("--gpw", str(self.gpw))["quotes"][PKN_ISIN]
+        self.assertEqual(self.fetched, ["PKN.WA"])
+        self.assertEqual(self.shown(rec)[-1], ("2026-10-13", 62.2, "gpw", False, "inconsistent_ohlc"))
+        self.assertNotIn(73.0, [b["c"] for b in rec["bars"]])
+        self.assertEqual(rec["last_closed"], {"date": "2026-10-12", "c": 61.0, "status": "uncertain",
+                                              "excluded_sessions": ["2026-10-13"]})
+
+    def test_the_header_names_the_sources_in_trust_order(self):
+        doc = self.run_cli("--store", str(self.store), "--gpw", str(self.gpw))
+        self.assertEqual(doc["source"], "own candle store (one CSV per ISIN) > GPW quotation archive, "
+                                        "collected (one CSV per ISIN) > Yahoo Finance v8 chart "
+                                        "(~15 min delayed)")
+
+    def test_a_missing_gpw_directory_is_no_store_and_the_rest_still_answers(self):
+        rec = self.run_cli("--store", str(self.store),
+                           "--gpw", str(self.tmp / "absent"))["quotes"][PKN_ISIN]
+        self.assertEqual([(b["date"], b["source"]) for b in rec["bars"]],
+                         [("2026-10-08", "yahoo"), ("2026-10-09", "store"),
+                          ("2026-10-12", "yahoo"), ("2026-10-13", "yahoo")])
+        self.assertEqual(rec["unavailable"], [{"source": "gpw", "reason": "no_store"}])
 
 
 class TestCountFlags(unittest.TestCase):
@@ -539,22 +648,52 @@ class TestCountFlags(unittest.TestCase):
 
 
 class TestFlagsReachTheCompositionRoot(unittest.TestCase):
-    """main() hands --store to build (the build_source seam) and nothing else does."""
+    """main() hands --store and --gpw to build (the build_source seam) and nothing else does."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self.built = []                     # store_dir per build call
+        self.built = []                     # (store_dir, gpw_dir) per build call
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def build(self, *, store_dir=None):
-        self.built.append(store_dir)
+    def build(self, *, store_dir=None, gpw_dir=None):
+        self.built.append((store_dir, gpw_dir))
         return FakeSource(QuoteSeries(BARS, (YAHOO_PKN,)))
 
     def test_store_dir_reaches_build(self):
         run(["--store", str(self.tmp), PKN_ISIN], build=self.build)
-        self.assertEqual(self.built, [self.tmp])
+        self.assertEqual(self.built, [(self.tmp, None)])
+
+    def test_gpw_dir_reaches_build_with_or_without_a_store(self):
+        """Both optional and independent."""
+        run(["--gpw", str(self.tmp / "gpw"), PKN_ISIN], build=self.build)
+        run(["--store", str(self.tmp / "store"), "--gpw", str(self.tmp / "gpw"), PKN_ISIN],
+            build=self.build)
+        self.assertEqual(self.built, [(None, self.tmp / "gpw"),
+                                      (self.tmp / "store", self.tmp / "gpw")])
+
+    def test_unsubstituted_variable_in_gpw_is_rejected_before_anything_runs(self):
+        literal = self.tmp / "${CLAUDE_PROJECT_DIR}" / "data" / "gpw"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as exit_:
+            run(["--gpw", str(literal), PKN_ISIN], build=self.build)
+        self.assertEqual(exit_.exception.code, 2)
+        self.assertEqual(self.built, [])
+        self.assertIn("argument --gpw", err.getvalue())
+        self.assertIn("not substituted", err.getvalue())
+        self.assertIn("e.g. --gpw /path/to/project/data/gpw", err.getvalue())
+        self.assertEqual(os.listdir(self.tmp), [])
+
+    def test_gpw_whose_parent_is_missing_is_rejected_before_anything_runs(self):
+        gpw = self.tmp / "data" / "gpw"                       # tmp/data does not exist
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as exit_:
+            run(["--gpw", str(gpw), PKN_ISIN], build=self.build)
+        self.assertEqual(exit_.exception.code, 2)
+        self.assertEqual(self.built, [])
+        self.assertIn(f"parent directory '{self.tmp / 'data'}' does not exist", err.getvalue())
+        self.assertEqual(os.listdir(self.tmp), [])
 
     def test_cache_flag_is_rejected_before_anything_runs(self):
         """There is no cache (ADR 0004): a caller still passing --cache is told so, not ignored."""
@@ -593,7 +732,7 @@ class TestFlagsReachTheCompositionRoot(unittest.TestCase):
     def test_missing_store_under_an_existing_parent_still_reaches_build(self):
         """The store directory itself missing is a project without a store yet, not a bad path."""
         run(["--store", str(self.tmp / "market-data"), PKN_ISIN], build=self.build)
-        self.assertEqual(self.built, [self.tmp / "market-data"])
+        self.assertEqual(self.built, [(self.tmp / "market-data", None)])
 
 
 if __name__ == "__main__":

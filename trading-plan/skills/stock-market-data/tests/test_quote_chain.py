@@ -6,10 +6,11 @@ bars (or raises a fixed failure) and records the period it was asked for.
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import date
 
 from support import flat_bar as bar, num
-from market_data.model import DateRange, Instrument, Isin
+from market_data.model import DateRange, Instrument, Isin, Trust
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 from market_data.quote_chain import QuoteChain
@@ -17,6 +18,7 @@ from market_data.quote_chain import QuoteChain
 INSTRUMENT = Instrument(isin=Isin.parse("PLPKN0000018"), symbols={"yahoo": "PKN.WA"})
 PERIOD = DateRange(date(2026, 7, 1), date(2026, 7, 24))
 NOW = 1784973600.0
+INCONSISTENT_OHLC = Trust.untrusted("inconsistent_ohlc")
 
 
 def seen(bars):
@@ -65,6 +67,21 @@ class TestQuoteChain(unittest.TestCase):
         self.assertEqual(seen(s.bars),
                          [("2026-07-22", 10.0, "a"), ("2026-07-23", 11.0, "b"),
                           ("2026-07-24", 12.0, "a")])
+
+    def test_an_untrusted_bar_from_a_higher_source_blocks_a_trusted_one_from_a_lower(self):
+        """The first source with a row for a date takes it, even untrusted: the GPW archive's
+        2026-10-13 rows (low above open and close) are served untrusted and Yahoo's trusted bar for
+        that date is dropped, not used to replace them. The fix is a hand import into the own
+        store, which is higher still."""
+        gpw_bar = replace(bar("2026-07-23", 10.0, "gpw"), trust=INCONSISTENT_OHLC)
+        gpw = ChainFake("gpw", [gpw_bar, bar("2026-07-22", 9.0, "gpw")])
+        yahoo = ChainFake("yahoo", [bar("2026-07-23", 99.0, "yahoo"),
+                                    bar("2026-07-24", 11.0, "yahoo")])
+        s = ask(gpw, yahoo)
+        self.assertEqual(seen(s.bars), [("2026-07-22", 9.0, "gpw"), ("2026-07-23", 10.0, "gpw"),
+                                        ("2026-07-24", 11.0, "yahoo")])
+        self.assertEqual(s.bars[1], gpw_bar)                 # with its reason, unchanged
+        self.assertEqual(s.bars[1].trust.reason, "inconsistent_ohlc")
 
     def test_two_bars_with_one_date_from_one_source_both_stay(self):
         """Yahoo can return two bars dated alike after a backfill; dedup is only between sources."""

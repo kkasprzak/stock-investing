@@ -164,6 +164,56 @@ class TestStoreDidNotAnswer(unittest.TestCase):
         self.assertIn("Saturday", err.getvalue())
 
 
+class TestAStoreDirectoryUnderAnotherName(unittest.TestCase):
+    """The same adapter serves any directory in the store's format under the name and description
+    it is given: the GPW quotation archive is one (ADR 0005). Everything the store says, it says
+    under that name."""
+
+    GPW = dict(name="gpw", description="GPW quotation archive")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_without_a_name_it_is_the_own_store(self):
+        source = StoreQuotes(STORE)
+        self.assertEqual((source.name, source.description),
+                         ("store", "own candle store (one CSV per ISIN)"))
+
+    def test_it_is_named_and_described_as_given(self):
+        source = StoreQuotes(STORE, **self.GPW)
+        self.assertEqual((source.name, source.description), ("gpw", "GPW quotation archive"))
+        self.assertEqual(StoreQuotes.name, "store")          # the class itself is not renamed
+
+    def test_bars_and_resolution_carry_the_name(self):
+        s = StoreQuotes(STORE, **self.GPW).daily(PKN, PERIOD, now=NOW)
+        self.assertEqual({b.source for b in s.bars}, {"gpw"})
+        self.assertEqual(s.resolved, (Resolution("gpw", "PLPKN0000018", ResolvedBy.ISIN),))
+
+    def test_a_row_whose_low_does_not_bracket_open_and_close_is_untrusted_under_the_name(self):
+        """The 2026-10-13 shape: GPW's low above the open and close, served as published."""
+        tmp = store_with(self, "2026-10-09,103,108,102,107.50,1500000,gpw",
+                         "2026-10-12,107,109,107.80,108,900000,gpw")
+        s = StoreQuotes(tmp, **self.GPW).daily(PKN, PERIOD, now=NOW)
+        self.assertEqual([(b.source, b.trust) for b in s.bars],
+                         [("gpw", Trust.TRUSTED), ("gpw", INCONSISTENT_OHLC)])
+
+    def test_missing_directory_is_no_store_under_the_name(self):
+        with self.assertRaises(QuoteSourceUnavailableError) as caught:
+            StoreQuotes(self.tmp / "missing", **self.GPW).daily(PKN, PERIOD, now=NOW)
+        self.assertEqual(caught.exception.failures, (SourceFailure("gpw", "no_store"),))
+
+    def test_broken_file_is_malformed_under_the_name(self):
+        (self.tmp / "PLPKN0000018.csv").write_bytes(b"date,open,high,low,close,volume,source\n"
+                                                    b"2026-10-10,103,108,102,107.50,1500000,gpw\n")
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(QuoteSourceUnavailableError) as caught:
+            StoreQuotes(self.tmp, **self.GPW).daily(PKN, PERIOD, now=NOW)
+        self.assertEqual(caught.exception.failures, (SourceFailure("gpw", "malformed"),))
+        self.assertEqual(caught.exception.resolved,
+                         (Resolution("gpw", "PLPKN0000018", ResolvedBy.ISIN),))
+
+
 class TestStoreInAChain(unittest.TestCase):
     def test_store_wins_a_shared_date_and_the_lower_source_fills_the_rest(self):
         yahoo = FakeSource(QuoteSeries((flat_bar("2026-10-09", 99.0),

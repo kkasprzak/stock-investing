@@ -1,5 +1,7 @@
-"""The own candle store as a QuoteSource: one CSV per ISIN in a directory the project names (ADR 0000,
-ADR 0001). Read-only; the importer is the only writer. The file format lives in store_file."""
+"""A store directory as a QuoteSource: one CSV per ISIN in a directory the project names (ADR 0000,
+ADR 0001). The own candle store is one, the collected GPW quotation archive another (ADR 0005): the
+same adapter serves each under its own name. Read-only; the writers are elsewhere. The file format
+lives in store_file."""
 from __future__ import annotations
 
 import sys
@@ -14,11 +16,19 @@ INCONSISTENT_OHLC = Trust.untrusted("inconsistent_ohlc")
 
 
 class StoreQuotes:
-    name = "store"
+    name = "store"                                      # the own candle store, unless named otherwise
     description = "own candle store (one CSV per ISIN)"
 
-    def __init__(self, store_dir: Path) -> None:
+    def __init__(self, store_dir: Path, *, name: str | None = None,
+                 description: str | None = None) -> None:
+        """`name` goes on every bar, resolution and failure this source gives; `description` into
+        the chain's header. A missing directory is no_store whatever the name: the failure already
+        says which source it is."""
         self._dir = Path(store_dir)
+        if name is not None:
+            self.name = name
+        if description is not None:
+            self.description = description
 
     def daily(self, instrument: Instrument, period: DateRange, *, now: float) -> QuoteSeries:
         """Every stored session up to period.end, all complete. Not cut at period.start: the port
@@ -40,8 +50,8 @@ class StoreQuotes:
                            (resolution,))
 
     def _bar(self, q: DailyQuote) -> DailyBar:
-        """A stored session as the port's bar. Its source is this adapter, not the provider the row
-        came from; trusted, since only closed sessions someone imported are stored (ADR 0000) —
+        """A stored session as the port's bar. Its source is this adapter's name, not the provider
+        the row came from; trusted, since only closed sessions are stored (ADR 0000, ADR 0005) —
         unless its low and high do not bracket its open and close: then it is served as stored,
         neither dropped nor corrected, but untrusted."""
         # The Stooq importer rejects such a row, so in the own store it can only appear after a

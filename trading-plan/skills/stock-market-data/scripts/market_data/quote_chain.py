@@ -11,10 +11,13 @@ class QuoteChain:
     """A QuoteSource over `sources`, most trusted first. Every source is asked for the whole period
     (the chain knows no exchange calendar, so it cannot ask for gaps). A date a higher source already
     answered is skipped in the lower ones, even when the higher source's bar is untrusted and the
-    lower one's trusted (which cannot happen while the only higher source is the store, whose bars
-    are always trusted); within one source bars pass unchanged, two bars sharing a date included. A source that raises QuoteSourceUnavailableError is recorded in `unavailable` and
-    the next one is asked; only when none answered does the chain raise. Any other exception
-    propagates. An empty answer is an answer."""
+    lower one's trusted: the lower bar is dropped, not used to replace it. This happens in practice:
+    the GPW archive serves a session whose low or high does not bracket its open and close
+    untrusted, and Yahoo's trusted bar for that date never shows. The fix for such a day is a hand
+    import into the own store, which is above the archive and wins it. Within one source bars pass
+    unchanged, two bars sharing a date included. A source that raises QuoteSourceUnavailableError is
+    recorded in `unavailable` and the next one is asked; only when none answered does the chain
+    raise. Any other exception propagates. An empty answer is an answer."""
 
     name = "chain"
 
