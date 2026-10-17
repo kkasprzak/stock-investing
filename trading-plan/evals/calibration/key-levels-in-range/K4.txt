@@ -1,0 +1,10 @@
+symbol: KTY.PL
+trend_MN_W1: up — The monthly trend has made higher highs and higher lows from 658.5 (Oct 2024) to 1362 (Jul 2026), but on the weekly chart the highs have been falling since that peak (1324, 1314, 1303, 1270) while the lows hold flat at about 1200, forming a descending triangle.
+momentum_D1: weakness — Price has closed lower for three days in a row, from 1257 to 1204, and the last two sessions closed at the day's low, right on the 1200 support.
+key_levels: support 1200-1201 (lows of Aug 20 and Sep 3), 1175 (July weekly low), 1152 (June weekly low); resistance 1270 (Sep 8 high), 1303-1324 (August highs), 1362 (July all-time high in this data)
+technical_status: in decision zone
+condition: 1200 must hold, then a daily close above 1270 is needed to break the falling highs and resume the trend; a close above 1362 would confirm a new high.
+invalidation: 1200
+technical_stop: 1174
+score: 4
+note: The longer-term uptrend is intact, but price closed at 1204, on the floor of a weekly descending triangle, with weak daily momentum, so a close below 1200 would complete a breakdown toward 1175/1152. The data is stale: the last closed D1 bar is 2026-09-11, about five weeks before today (2026-10-16), and the September monthly bar is still marked incomplete.

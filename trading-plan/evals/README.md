@@ -82,6 +82,28 @@ both directions, including a full known-bad answer: 36 of 36 votes, about a cent
 The lesson generalises: calibrate a judge on what it will actually be shown. A calibration that
 hands it a trimmed excerpt is an easier test than the real one, and passes judges that will not.
 
+## Calibrating a judge
+
+An `llm` grader is a prompt for a judge model, and a judge can be wrong without saying so. Before
+a green run says anything about the skill, show the judge samples whose verdict you already know:
+
+```
+make calibrate GRADER=stop-side           # 3 votes per sample, about a cent a vote
+make calibrate GRADER=stop-side VOTES=5
+python3 trading-plan/evals/scripts/calibrate_judge.py stop-side --dry-run    # check the files, print one prompt, no model calls
+```
+
+`calibration/<grader>/` holds the samples (`S1.txt` — an output of the skill, with the line under
+test changed) and `expected.tsv` (`S1<TAB>PASS`), the one place the expected verdicts live. The
+directory's name is the grader's file name. The script exits 1 if any vote disagrees, 2 if a sample
+and the manifest do not match, and reports a vote that said both PASS and FAIL — the judge changed
+its mind, which the runner, asking for one word, would not show.
+
+Run it when a criterion is new or edited, when `JUDGE_MODEL` changes, and when a fixture changes (the
+layer-2 judges carry its numbers). The best samples are real outputs of the skill, spoiled in one
+place. It approximates the runner — it asks the judge directly, with our wording — so the runner
+stays the final check: set a constant so that a real output must fail, and see the grader go red.
+
 ## Layout
 
 ```
@@ -90,6 +112,7 @@ test-cases/<skill>/<case>/case.yaml   the case: scaffold_script + prompt
 test-cases/<skill>/<case>/scaffold.sh stages the fixture into the sandbox
 test-cases/<skill>/<case>/graders/    graders, one file per assertion
 scripts/                         extract_outputs.py
+calibration/<grader>/            outputs with an expected verdict, for checking an llm judge
 output/runs/                     recovered raw outputs + index.tsv
 output/results/                  runner artifacts (pass --output-dir)
 ```
@@ -153,20 +176,63 @@ input rather than the input.
 The suite is young and its coverage is uneven — worth knowing before reading a green run as
 proof of anything.
 
-`invalidation-differs-from-stop` does not know the exception `SKILL.md` documents: one number
-for both is admissible when the structure leaves no room between them and `note` says so. It
-will fail an output that is in fact compliant.
+**Two cases, two instruments.** `instrument-analysis` is measured on `KTY.PL` (a full snapshot)
+and `SPCX.US` (an all-`[NO DATA]` snapshot) and nothing else. A structure with no room between
+`invalidation` and the stop, a clean breakout, a clean downtrend: none is in the set. That is
+step 4, and it needs labels from someone who reads charts, not from the agent.
 
-Two invariants are not covered at all, and cannot be with the graders available: that
-`technical_stop` sits on the correct side of the last close, and that `key_levels` fall within
-the snapshot's price range. Both are numeric comparisons, and a `regex` grader matches patterns
-rather than comparing values — expressing them needs a paid `llm` grader or a check outside the
-runner.
+**The layer-2 judges are tied to one fixture.** `technical-stop-below-last-close` and
+`key-levels-within-snapshot-range` carry the `KTY.PL` facts in their criterion (last close 1204,
+price range 658.5–1362), because the judge sees the answer and not the snapshot. Re-capture the
+fixture and both must be edited by hand. The range is the widest one, the MN window, so a level
+outside the D1 window but inside MN passes.
 
-The `no-data` case checks the shape of the block — ten keys, in order, nothing around them — but
-not that the fixture was actually read. Its expected output is also what the model tends to emit
-when the fixture never reached the sandbox, so it can pass whether or not the snapshot was
-staged: run without `--scaffold` and it may go green for the wrong reason.
+**The stop's side is an inference.** `SKILL.md` defines `invalidation` as the price whose close
+*below* breaks the structure, which makes the tool long-only, but it never says
+`technical_stop` sits below the market. The grader assumes it does.
+
+**Judges are checked on hand-built samples, not on the bounds.** Each judge was calibrated on
+5–6 samples, three votes each, in two prompt shapes (verdict first, reasoning first): 66 of 66 as
+expected (`calibration/`). No sample sits exactly on a bound — 1362, 658.5, a stop at 1203.99.
+
+**A judge that decides before it counts is wrong on numbers.** Before the criteria told the
+judge to list and compare every number first, 3 of 9 votes on a compliant `key_levels` line opened
+with FAIL, and 3 of 3 on a stop above the close opened with PASS, each then correcting itself in
+the next sentence. The runner asks for one word, so that correction would be lost. Both criteria
+now ask for the comparison before the verdict; after that, no vote disagreed with its sample.
+
+**Calibrate on text that looks like the real thing.** `key_levels` in a real output is prose with
+dates and ranges (`support 1200-1201 (lows of Aug 20 and Sep 3), 1175 …`). The first, clean
+samples would have passed a judge that mistakes `20` for a price.
+
+**`no-data` now reads the fixture.** `fixture-was-read` greps the run's trace for a string taken
+verbatim from `SPCX.US.json`, so it separates a compliant answer from a compliant answer
+produced without the snapshot. Checked both ways on 2026-10-15: 5 of 5 green with the scaffold;
+with a wrong file name in the prompt it went red in 2 of 5 while `all-values-no-data` and
+`exactly-ten-contract-lines-in-order` stayed green in those same runs.
+
+## instrument-analysis: baseline
+
+Measured 2026-10-15 and 2026-10-16, plugin `0.7.0`, five runs per case, judge Sonnet 5.5.
+
+| case | graders | runs passing | score | cost |
+|---|---|---|---|---|
+| `no-data` | 4 (all regex or trace) at `99959fc` | 5/5 | 1.00 | $0.35 |
+| `contract-shape` | 10 (one `llm`) at `f753978` | 5/5 | 1.00 | $0.84 |
+| `contract-shape` | 12 (three `llm`) at `a059803` | 5/5 | 1.00 | $1.17, of which judges $0.38 |
+
+**There is no before-and-after here, and that is the result.** On 14 September, checking the raw
+outputs by hand, `no-data` conformed to the contract in 2 of 5 runs (prose before and after the
+block in two, wrong field order in one) while the suite showed 100%. The 15 October run, with
+the order-and-nothing-around-it pattern in place, is 5 of 5. The two numbers are not the same
+experiment: different plugin version (`0.2.0` then, `0.7.0` now), and the earlier one was
+counted by hand. So the table does not say the skill got better, and nothing about `SKILL.md`
+was changed to produce it. What it does say is that on these two snapshots the graders as they
+stand find no defect, and the layer-2 invariants — the one place a drifting model would show — also
+hold.
+
+The measure-tighten-measure sequence therefore has nothing to tighten yet. It starts when a case
+exists that the skill fails; that is what step 4's golden set is for.
 
 ## instrument-research: the buyback fix, before and after
 
