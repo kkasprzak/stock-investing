@@ -1,8 +1,9 @@
 # Tests — stock-market-data
 
 Deterministic, offline regression tests for `scripts/quotes.py` (read side), `scripts/import_quotes.py`
-(write side, the own candle store), `scripts/symbols.py` (instrument names) and the
-`scripts/market_data/` package behind them. Stdlib `unittest`, no dependencies.
+(write side, the own candle store), `scripts/collect_gpw.py` (write side, the GPW archive store),
+`scripts/symbols.py` (instrument names) and the `scripts/market_data/` package behind them. Stdlib
+`unittest`, no dependencies.
 
 ```
 make test                                                                          # from the repo root, every skill's tests
@@ -16,21 +17,31 @@ One test file per module of `scripts/`, plus shared support:
 
 ```
 support.py              frozen clock (FROZEN_TODAY, FROZEN_DATE, FROZEN_NOW, GPW_CLOSE, warsaw()), TOL,
-                        fixture loaders (load_yahoo, load_stooq), DIVIDEND_WEEKS, pipeline() (DailyBar
+                        FX (the fixtures directory) and fixture loaders (load_yahoo, load_stooq),
+                        DIVIDEND_WEEKS, pipeline() (DailyBar
                         or PeriodBar), bar builders (daily_bar: a DailyBar from plain numbers, trusted
                         unless trust= says otherwise; flat_bar; price: a Price; num: a Price as the
                         float the output prints), FakeSource; puts ../scripts on sys.path
 test_model.py           market_data/model.py — DateRange, Interval, PeriodInterval (its periods), AtrPeriod and
                         SessionsEachSide, Instrument, Isin, Price, Volume, DailyQuote, Trust, Status,
                         Quality, DailyBar, PeriodBar (and each as the Candle the readings see)
-test_store_file.py      market_data/store_file.py — the store's file schema: read, write, merge, StoredQuote
+test_store_file.py      market_data/store_file.py — the store's file schema: read, write, merge, StoredQuote,
+                        merge_into (the one way rows enter a store file, for the importer and the
+                        collector)
 test_store.py           market_data/adapters/store.py — StoreQuotes: what the store answers (trusted, except a
                         row whose low/high does not bracket open/close), no_store, malformed, the store
                         ahead of a lower source in a chain; the same adapter under another name (gpw)
 test_import_stooq.py    market_data/importers/stooq.py and scripts/import_quotes.py — parse, snap, the real-export
                         guards and ATR pins, the importer end to end on a temp store, its usage errors
-test_import_gpw.py      market_data/importers/gpw.py — saved GPW archive pages (fixtures/gpw/): rows, volume-0 skipped, PEO dividend, holiday, 13.10 before/after GPW's correction, rejected pages
-test_collect_gpw.py     scripts/collect_gpw.py — one session over a fake opener serving fixtures/gpw/: files and report, the request's URL and headers, an empty page writes nothing, a re-run rewrites nothing (mtime), 13.10 corrected names its ISINs, resets retried after a pause (exit 3 when they run out, an HTTP status not retried), exit 1 for a changed page or a broken store file, exit 2 for a weekend, a future date, `${`, a missing parent
+test_import_gpw.py      market_data/importers/gpw.py — saved GPW archive pages (fixtures/gpw/): rows,
+                        volume-0 skipped, PEO dividend, holiday, 13.10 before/after GPW's correction,
+                        rejected pages
+test_collect_gpw.py     scripts/collect_gpw.py — one session over a fake opener serving fixtures/gpw/:
+                        files and report, the request's URL and headers, an empty page writes nothing,
+                        a re-run rewrites nothing (mtime), 13.10 corrected names its ISINs, resets
+                        retried after a pause (exit 3 when they run out, an HTTP status not retried),
+                        exit 1 for a changed page or a broken store file, exit 2 for a weekend, a
+                        future date, `${`, a missing parent
 test_indicators.py      market_data/indicators.py — aggregate, last_closed, ATR, swing lows (the readings' derived
                         fields and the counts they refuse), the quality every reading carries,
                         placeholder sessions (ADR 0002), Stooq oracle
@@ -73,6 +84,16 @@ stooq_lpp_d_raw.csv             same kind of export, LPP 2022-01-03..2026-10-12,
 stooq_ale_d_raw.csv             same kind of export, ALE 2026-05-04..2026-10-09, 114 sessions; ATR regression pin
 stooq_peo_w_raw.csv             same kind of export, weekly (41 weeks dated on Sundays): must be rejected
 store/PLPKN0000018.csv          hand-written, in the store's own schema (LF): 2026-10-02 and 10-05..10-09, round numbers
+gpw/archiwum_<DD-MM-YYYY>.html  real GPW quotation archive pages (the whole equity market, one session each)
+                                saved from gpw.pl, never edited (a test's broken page is one of them with a
+                                single edit made in memory): 11-06-2026 and 12-06-2026 (PEO's last
+                                session before its ex-date and the ex-date itself, unadjusted), 16-10-2026
+                                (a normal day, five names cross-checked with Stooq), 13-10-2026 (fetched
+                                2026-10-17, after GPW's correction), 25-12-2025 (a holiday: no rows, "Brak
+                                danych dla wybranych kryteriów.")
+gpw/archiwum_13-10-2026_fetched-2026-10-15.html
+                                the same session as first published: nine traded lows above open and
+                                close, fifteen lows GPW later lowered
 cli_0_4_0_PKN.json              the output of plugin 0.4.0 (commit 2589785) for `PKN.PL --atr --swings` on
                                 yahoo_PKN.json, minus `generated`; read only for its header's `source`
                                 (test_yahoo.py)
@@ -113,12 +134,16 @@ bodies, HTTP errors and timeouts without the network and without really pausing.
 opener=..., sleep=...)` take the same injections, so the CLI is tested without the network. The store is a
 directory on disk: the
 `fixtures/store/` directory, or a temp one; `import_quotes.main(argv, today=)` takes the date, so
-"no session after today" does not follow the clock.
+"no session after today" does not follow the clock. `collect_gpw.main(argv, today=, opener=,
+sleep=)` takes the same three: the archive is `Opener`, local to `test_collect_gpw.py`, serving
+the saved pages or raising a scripted reset, and the pause is a list the sleep appends to.
 
 ## How it stays deterministic
 
-The pipeline depends on live Yahoo and the wall clock (the `complete` flag). Both are frozen:
+The pipeline depends on live Yahoo and the wall clock (the `complete` flag), the collector on the
+live GPW archive and the date. All are frozen:
 - **Yahoo** → captured raw responses in `fixtures/yahoo_*.json` (trimmed ~7 months).
+- **GPW archive** → saved pages in `fixtures/gpw/`, the collector's session and today passed in.
 - **clock** → `FROZEN_TODAY = 2026-07-25` / `FROZEN_NOW` injected into `build_daily`, `FROZEN_DATE`
   (the same day as a date) into `aggregate`;
   session-boundary cases build their own epochs with `warsaw(...)`.
@@ -213,6 +238,31 @@ values; the tests re-assert them on every run.
   one that cannot be created (both skipped as root). An ISIN outside the map is imported. Exit 2: a
   missing `--store`, a `--for` that is no ISIN (a ticker, a check digit, lower case, a space), a literal `${` in `--store`, a `--store` whose parent directory does not exist (nothing
   created).
+- **GPW parser** (`test_import_gpw.py`) — on the saved pages: every row read (400 or 402 a day) and
+  the rows with volume 0 left out of `parse` (a row without trades: `O=H=L=0`, the last price as
+  close); every row is the named session, source `gpw`; PEO before and on its ex-date unadjusted;
+  the change column never read (on an ex-date it is measured from an adjusted reference); five
+  names on 16.10 equal Stooq to the grosz; prices keep the text GPW wrote; a holiday is an empty
+  answer; bytes and text read the same. `TestSessionGpwCorrected`: 13.10 as first published has
+  nine traded rows with a low above open and close, the corrected copy none, the two differ in
+  fifteen lows and nothing else, and `parse` keeps the uncorrected rows as written.
+  `TestRejectedPages`: a page with rows that does not fit is rejected whole with the row's line —
+  a dropped or extra cell, a bad ISIN check digit, a number that is not one, a currency other than
+  PLN, a malformed row without trades, a traded row with a zero price, an ISIN twice, columns in
+  another order, no rows and no "Brak danych" notice, not UTF-8.
+- **Collector** (`test_collect_gpw.py`) — `main()` on a temp `data/gpw` under an existing parent:
+  one file per traded ISIN and the report; the request's URL and its User-Agent, Accept-Language
+  and Accept; today without `--date`, a past session under its own date; an empty page writes
+  nothing (the directory not even created) and says `empty`; the same page twice rewrites no file
+  (mtime kept); 13.10 collected first as published, then corrected, replaces fifteen sessions and
+  names their ISINs; other sessions in a file are kept. `TestCollectRetries`: a reset then the page
+  pauses once, for `PAUSE` (at least 30 s); three failed tries (a reset, a timeout, a refusal)
+  exit 3 with nothing written, naming the last try's reason; an HTTP status is an answer: exit 3 at
+  once, not tried again. `TestCollectRejected` (exit 1, nothing written): a changed page, a broken
+  store file (left as it was), a `--gpw` that is a file. `TestCollectUsage` (exit 2, before any
+  request): `--gpw` missing, a
+  weekend date or today on a weekend, a date after today or not `YYYY-MM-DD`, a literal `${`, a
+  parent that does not exist (nothing created).
 - **CLI** (`test_cli.py`) — `build_source` fetches on every call (there is no cache), with a
   store asks it before Yahoo, with gpw too asks store > gpw > Yahoo, and hands its opener and sleep through to Yahoo's fetch; the `ok:true` / `ok:false` records (one `ok:false` path
   for a failed chain and for no bars while a source did not answer), no `xtb` field, a key that is
@@ -257,4 +307,6 @@ plugin 0.6.0 and `cli_0_7_0_PLPKN0000018.json` with plugin 0.7.0, not with the c
 pins stop pinning anything.
 
 The `_raw` exports are not re-captured: the ATR pins and the snap guard are tied to them as they
-are. A new export goes in under a new name.
+are. A new export goes in under a new name. The same holds for the GPW pages: the counts and the
+two copies of 13.10 are tied to them, and a page fetched again goes in beside the old one under a
+name that says when, as `archiwum_13-10-2026_fetched-2026-10-15.html` did.
