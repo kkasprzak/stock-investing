@@ -115,7 +115,8 @@ by import and asked first: the GPW archive store and Yahoo only fill what it lac
 The GPW archive store is this project's copy of the exchange's own quotation archive: each session
 as GPW published it, for the whole GPW equity market, one CSV file per ISIN in the own store's
 format, with `source` `gpw`. Prices are unadjusted; volume is GPW's final figure for the session,
-block trades included. It holds the sessions collected since the project started collecting;
+which on some days exceeds every other provider's by a round lot (block trades, most likely). It
+holds the sessions collected since the project started collecting;
 older history is the own store's. It is asked after the own store and before Yahoo, so it fills
 the GPW sessions nobody imported by hand, and Yahoo is left with names not listed on GPW, today's
 session before GPW publishes it, and any day not collected.
@@ -136,8 +137,8 @@ session before GPW publishes it, and any day not collected.
   into the own store, which wins the day.
 - **Volume can mix two kinds in one series.** A day from the own store carries the volume of an
   evening snapshot (Stooq's export); a day from `gpw` carries GPW's final volume, which on some
-  days is larger by block trades. The own store wins every day it has, so the two kinds can sit
-  side by side in one instrument's bars.
+  days is larger (by a round lot: block trades, most likely). The own store wins every day it has,
+  so the two kinds can sit side by side in one instrument's bars.
 - Rows GPW lists with volume 0 are not sessions and are never collected: such a day is a gap in
   `gpw`, and a lower source may fill it.
 - GPW may correct a published session days later. A session collected again (`--date`) picks the
