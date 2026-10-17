@@ -1,5 +1,5 @@
 {
-  "note": "Single shared symbol map for quote scripts. Key = ISIN (durable, rename-proof; every key must be a valid ISIN, or every script that reads the map refuses to start). `symbols` maps source-name -> that source's ticker: xtb = the broker's (execution venue's) ticker, yahoo = data vendor. A new data source (eodhd, a broker's API) = an adapter implementing the QuoteSource port (market_data/ports.py) plus its symbol here; an entry alone fetches nothing. On a rename, re-resolve a source's symbol via that source's search (Yahoo: v1/finance/search?q=<ISIN>). quotes.py is asked by ISIN and takes symbols.yahoo from that entry (an ISIN without one is unmapped for Yahoo; nothing is guessed); symbols.py turns an xtb ticker into its ISIN and back. xtb symbols verified by ISIN against XTB's OMI specification table effective 2026-06-29; instruments without an xtb key are not offered there.",
+  "note": "Single shared symbol map for quote scripts. Key = ISIN (durable, rename-proof; every key must be a valid ISIN, or every script that reads the map refuses to start). `symbols` maps source-name -> that source's ticker: xtb = the broker's (execution venue's) ticker, yahoo = data vendor. A new data source (eodhd, a broker's API) = an adapter implementing the QuoteSource port (market_data/ports.py) plus its symbol here; an entry alone fetches nothing. On a rename, re-resolve a source's symbol via that source's search (Yahoo: v1/finance/search?q=<ISIN>). quotes.py is asked by ISIN and takes symbols.yahoo from that entry (an ISIN without one is unmapped for Yahoo; nothing is guessed); symbols.py turns an xtb ticker into its ISIN and back. xtb symbols verified by ISIN against XTB's OMI specification table effective 2026-06-29 (NIEWIADOW, SYN2BIO, IMCOMPANY against the one effective 2026-10-05); instruments without an xtb key are not offered there.",
   "instruments": {
     "PLPKN0000018": {"name": "PKNORLEN", "symbols": {"xtb": "PKN.PL", "yahoo": "PKN.WA"}},
     "LU2237380790": {"name": "ALLEGRO", "symbols": {"xtb": "ALE.PL", "yahoo": "ALE.WA"}},
@@ -145,6 +145,9 @@
     "PLBMDLB00018": {"name": "SNTVERSE", "symbols": {"xtb": "SVE.PL", "yahoo": "SVE.WA"}},
     "PLWTCHN00030": {"name": "WITTCHEN", "symbols": {"xtb": "WTN.PL", "yahoo": "WTN.WA"}},
     "PLZBMZC00019": {"name": "ZREMB", "symbols": {"xtb": "ZRE.PL", "yahoo": "ZRE.WA"}},
-    "US84615Q1031": {"name": "SpaceX", "symbols": {"xtb": "SPCX.US", "yahoo": "SPCX"}}
+    "US84615Q1031": {"name": "SpaceX", "symbols": {"xtb": "SPCX.US", "yahoo": "SPCX"}},
+    "PLVNTCP00019": {"name": "NIEWIADOW", "symbols": {"xtb": "GNS.PL", "yahoo": "GNS.WA"}},
+    "PLSNBIO00013": {"name": "SYN2BIO", "symbols": {"xtb": "S2B.PL", "yahoo": "S2B.WA"}},
+    "LU0607203980": {"name": "IMCOMPANY", "symbols": {"xtb": "IMC.PL", "yahoo": "IMC.WA"}}
   }
 }
