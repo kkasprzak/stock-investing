@@ -14,7 +14,7 @@ import support  # noqa: F401  (puts scripts/ on sys.path)
 from support import FX
 from market_data.model import DailyQuote, Price, Volume
 from market_data.store_file import (ENCODING, HEADER, LINE_TERMINATOR, StoredQuote, StoreFileError,
-                                    merge, read, write)
+                                    merge, merge_into, read, write)
 
 STORE_PKN = os.path.join(FX, "store", "PLPKN0000018.csv")
 
@@ -263,6 +263,83 @@ class TestMerge(unittest.TestCase):
             merge([row(9), row(9)], [])
         with self.assertRaisesRegex(ValueError, "2026-10-09"):
             merge([], [row(9), row(9, c="101")])
+
+
+class TestMergeInto(unittest.TestCase):
+    """read + merge + write on one file in a store directory: what the importer and the GPW
+    collector both do per ISIN."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store = self.tmp / "market-data"
+        self.path = self.store / "PLPKN0000018.csv"
+        self.read_only = []
+
+    def tearDown(self):
+        for path in self.read_only:         # given write back before the temp dir is removed
+            path.chmod(0o755)
+
+    def stored(self, rows):
+        self.store.mkdir(exist_ok=True)
+        write(self.path, rows)
+        return self.path.read_bytes()
+
+    def test_a_new_file_in_a_store_directory_that_does_not_exist_yet(self):
+        result = merge_into(self.path, [row(8), row(9)])
+        self.assertEqual((result.added, result.unchanged, result.changed), (2, 0, 0))
+        self.assertEqual(read(self.path), [row(8), row(9)])
+
+    def test_the_store_directorys_parent_is_never_created(self):
+        path = self.tmp / "data" / "market-data" / "PLPKN0000018.csv"
+        with self.assertRaises(OSError):
+            merge_into(path, [row(9)])
+        self.assertEqual(os.listdir(self.tmp), [])
+
+    def test_added_sessions_join_the_stored_ones(self):
+        self.stored([row(7), row(9)])
+        result = merge_into(self.path, [row(8), row(12)])
+        self.assertEqual((result.added, result.unchanged, result.changed), (2, 0, 0))
+        self.assertEqual([r.quote.session.day for r in read(self.path)], [7, 8, 9, 12])
+
+    def test_nothing_new_leaves_the_file_and_its_mtime_alone(self):
+        before = self.stored([row(8), row(9, c="102.50")])
+        old = 1_000_000_000                                     # 2001: a write would move it
+        os.utime(self.path, (old, old))
+        result = merge_into(self.path, [row(9, c="102.5")])
+        self.assertEqual((result.added, result.unchanged, result.changed), (0, 1, 0))
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(self.path.stat().st_mtime, old)
+
+    def test_a_changed_session_is_reported_and_incoming_wins(self):
+        self.stored([row(8), row(9)])
+        result = merge_into(self.path, [row(9, c="101")])
+        self.assertEqual((result.added, result.unchanged, result.changed, result.changed_dates),
+                         (0, 0, 1, (date(2026, 10, 9),)))
+        self.assertEqual(read(self.path), [row(8), row(9, c="101")])
+
+    def test_a_row_whose_low_or_high_does_not_bracket_open_and_close_is_written_as_given(self):
+        # GPW publishes such sessions (ADR 0005); judging them is the adapter's job, not this one's.
+        odd = row(9, o="100", h="101", l="99.50", c="103")     # high below the close
+        merge_into(self.path, [odd])
+        self.assertEqual(read(self.path), [odd])
+
+    def test_a_malformed_stored_file_is_refused_and_left_as_it_is(self):
+        self.store.mkdir()
+        self.path.write_bytes(GOOD_HEADER + FRI + THU)          # dates out of order
+        with self.assertRaises(StoreFileError):
+            merge_into(self.path, [row(12)])
+        self.assertEqual(self.path.read_bytes(), GOOD_HEADER + FRI + THU)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root writes anywhere")
+    def test_an_unwritable_store_directory_raises_and_leaves_the_file(self):
+        before = self.stored([row(8)])
+        self.store.chmod(0o555)
+        self.read_only.append(self.store)
+        with self.assertRaises(PermissionError):
+            merge_into(self.path, [row(9)])
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(os.listdir(self.store), [self.path.name])
 
 
 if __name__ == "__main__":

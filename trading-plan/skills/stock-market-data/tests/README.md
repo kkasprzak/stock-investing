@@ -179,9 +179,15 @@ values; the tests re-assert them on every run.
   placeholder Tuesday after a real week, weekly `last_closed`, ATR and swing lows keep their values
   and name the Monday, as D1 `last_closed` does; the forming Tuesday is named by none.
 - **Store, file** (`test_store_file.py`) — `read` rejects every broken rule with its line (header,
-  columns, number, OHLC, weekend, duplicate, order, CRLF, BOM, not UTF-8, unreadable); `write`
-  round-trips byte for byte, sorts, replaces atomically; `merge` counts added / unchanged / changed
-  by value (`133.5` equals `133.50`), `source` aside.
+  columns, number, weekend, duplicate, order, CRLF, BOM, not UTF-8, unreadable); a row whose low or
+  high does not bracket its open and close is read as written (the adapter serves it untrusted);
+  `write` round-trips byte for byte, sorts, replaces atomically; `merge` counts added / unchanged /
+  changed by value (`133.5` equals `133.50`), `source` aside. `TestMergeInto` (the importer's and
+  the collector's one way into a store): a new file in a store directory that does not exist yet,
+  never that directory's parent; added and changed sessions reported and written; nothing new
+  leaves the bytes and the mtime; a row breaking the OHLC rule written as given; a malformed stored
+  file refused and left alone; an unwritable store directory raises with the file untouched
+  (skipped as root).
 - **Store, adapter** (`test_store.py`) — every row up to the period end and none after; an empty
   answer for an ISIN without a file (still resolved); an ISIN outside the map answered as any other; `no_store`
   when the directory is missing, `malformed` (plus `path:line` on stderr) for a broken file; in a

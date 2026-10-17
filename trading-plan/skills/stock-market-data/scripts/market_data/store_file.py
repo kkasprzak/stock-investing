@@ -140,6 +140,22 @@ def merge(existing, incoming) -> MergeResult:
                        tuple(sorted(changed_dates)))
 
 
+def merge_into(path: Path, incoming) -> MergeResult:
+    """The incoming rows merged into the file at path, the one way rows enter a store (the
+    importer and the GPW collector both write through here). The file is read if it exists, and
+    written only when a session was added or changed: nothing new leaves it, and its mtime, alone.
+    Its directory is created when missing, never that directory's parent (an unsubstituted project
+    path must fail, not grow a tree). Raises StoreFileError for a stored file that breaks the
+    schema and OSError for one that cannot be written; either way the file is left as it was."""
+    path = Path(path)
+    existing = read(path) if path.exists() else []
+    merged = merge(existing, incoming)
+    if merged.added or merged.changed:
+        path.parent.mkdir(exist_ok=True)
+        write(path, merged.rows)
+    return merged
+
+
 def write(path: Path, rows) -> None:
     """The whole file, sorted by session, replaced atomically (a temp file beside it, then
     os.replace): a reader never sees half a file and a failed write leaves the old one. A duplicate
