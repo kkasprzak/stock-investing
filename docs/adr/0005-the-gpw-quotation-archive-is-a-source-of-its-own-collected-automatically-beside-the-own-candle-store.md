@@ -23,8 +23,8 @@ that nobody had checked whether its prices are adjusted for dividends. We have l
 2026-10-14 to 2026-10-16: the archive has volume in shares and turnover in a separate column, its
 open, high, low and close for the five names we compared on 14 and 15 October matched Stooq's
 unadjusted export to the grosz, and a page read two days after its session had not changed. We
-have not yet seen a dividend inside that window. The archive is
-published by the exchange, keyed by ISIN, and one page holds the whole market for one session.
+have not yet seen a dividend inside that window. The archive is published by the exchange, keyed
+by ISIN, and one page holds the whole market for one session.
 
 The question is how the GPW archive should feed the layer, and how it relates to the own store.
 
@@ -61,9 +61,12 @@ nothing.
 
 This is not a cache in the sense of ADR 0004. A cache keeps a copy of what a source answers so that
 the source is not asked twice. GPW cannot be asked for an instrument's history at all; the
-collected sessions are the only form in which this data can be read. For the same reason the
-collected files are not versioned in git, unlike the own store (ADR 0001): every one of them can be
-rebuilt from the archive, and nobody reviews what a scheduled tool writes.
+collected sessions are the only form in which this data can be read.
+
+The collected sessions are versioned in git in the consumer's repository, like the own store
+(ADR 0001), though in a directory of their own. Once this source fills most GPW sessions, it is the
+record that notes cite. That record has to stay in our hands and not depend on GPW keeping its
+archive unchanged, and a candle that changes after it was collected has to be visible, not silent.
 
 ### Consequences
 
@@ -78,8 +81,12 @@ rebuilt from the archive, and nobody reviews what a scheduled tool writes.
 * Bad, because the archive also lists instruments that had no trade in a session, and on some days
   its low and high differ from every other provider. The source has to say which sessions it
   vouches for; what it cannot vouch for it serves as untrusted.
-* Bad, because the collected sessions have no history of their own. If GPW ever stops publishing
-  past sessions, the copy on the user's disk is the only one left.
+* Good, because a collected candle that changes later, after a fix to the parser or a correction on
+  GPW's side, shows up in git history and is not overwritten silently.
+* Good, because the collected record outlives the archive: if GPW ever stops publishing past
+  sessions, the copy in git remains.
+* Bad, because every collected session touches one file per listed instrument, a few hundred files
+  a day, so the history of that directory is noisy.
 * Bad, because a series can now mix two kinds of volume: the evening snapshot from hand imports and
   the final figure from the archive.
 
