@@ -30,6 +30,7 @@ test_store.py           market_data/adapters/store.py — StoreQuotes: what the 
 test_import_stooq.py    market_data/importers/stooq.py and scripts/import_quotes.py — parse, snap, the real-export
                         guards and ATR pins, the importer end to end on a temp store, its usage errors
 test_import_gpw.py      market_data/importers/gpw.py — saved GPW archive pages (fixtures/gpw/): rows, volume-0 skipped, PEO dividend, holiday, 13.10 before/after GPW's correction, rejected pages
+test_collect_gpw.py     scripts/collect_gpw.py — one session over a fake opener serving fixtures/gpw/: files and report, the request's URL and headers, an empty page writes nothing, a re-run rewrites nothing (mtime), 13.10 corrected names its ISINs, resets retried after a pause (exit 3 when they run out, an HTTP status not retried), exit 1 for a changed page or a broken store file, exit 2 for a weekend, a future date, `${`, a missing parent
 test_indicators.py      market_data/indicators.py — aggregate, last_closed, ATR, swing lows (the readings' derived
                         fields and the counts they refuse), the quality every reading carries,
                         placeholder sessions (ADR 0002), Stooq oracle
