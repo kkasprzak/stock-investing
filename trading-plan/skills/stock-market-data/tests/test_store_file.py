@@ -51,6 +51,16 @@ class TestRead(unittest.TestCase):
     def test_a_header_alone_is_an_empty_store(self):
         self.assertEqual(read(write_tmp(self, GOOD_HEADER)), [])
 
+    def test_a_row_whose_low_or_high_does_not_bracket_open_and_close_is_read_as_written(self):
+        """GPW publishes such rows (ADR 0005) and its store keeps them as published: the file does
+        not judge them, the adapter serving them does."""
+        rows = read(write_tmp(self, GOOD_HEADER + THU
+                              + b"2026-10-09,103,108,104,107.50,1500000,gpw\n"      # low > open
+                              + b"2026-10-12,103,106,102,107.50,900000,gpw\n"))     # high < close
+        self.assertEqual([(str(r.quote.low), str(r.quote.high), r.source) for r in rows],
+                         [("99", "103.50", "stooq"), ("104", "108", "gpw"), ("102", "106", "gpw")])
+        self.assertEqual([r.quote.ohlc_breach is None for r in rows], [True, False, False])
+
 
 class TestReadRejects(unittest.TestCase):
     """Every rule of the file fails with the file, the line and why; nothing is half-read."""
@@ -84,9 +94,6 @@ class TestReadRejects(unittest.TestCase):
     def test_fractional_volume(self):
         self.rejects(GOOD_HEADER + b"2026-10-09,103,108,102,107.50,560358.27,stooq\n", 2,
                      "560358.27")
-
-    def test_ohlc_rule(self):
-        self.rejects(GOOD_HEADER + b"2026-10-09,103,108,104,107.50,1500000,stooq\n", 2, "low")
 
     def test_date_not_iso(self):
         self.rejects(GOOD_HEADER + b"20261009,103,108,102,107.50,1500000,stooq\n", 2, "20261009")

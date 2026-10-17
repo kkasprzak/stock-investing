@@ -2,7 +2,9 @@
 
 <ISIN>.csv, header HEADER, LF line endings, UTF-8 without a BOM; rows ascending by a unique date,
 working days only, closed sessions only. date is ISO, prices are str(Price), volume is
-str(Volume), source is the provider of the row (e.g. "stooq").
+str(Volume), source is the provider of the row (e.g. "stooq"). A row whose low and high do not
+bracket its open and close is part of the format (GPW publishes such sessions, ADR 0005): the file
+keeps it as written, and whoever serves it judges it.
 """
 from __future__ import annotations
 

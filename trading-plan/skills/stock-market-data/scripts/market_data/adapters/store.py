@@ -10,6 +10,8 @@ from market_data.model import DailyBar, DailyQuote, DateRange, Instrument, Trust
 from market_data.ports import (QuoteSeries, QuoteSourceUnavailableError, Resolution, ResolvedBy,
                                SourceFailure)
 
+INCONSISTENT_OHLC = Trust.untrusted("inconsistent_ohlc")
+
 
 class StoreQuotes:
     name = "store"
@@ -39,6 +41,12 @@ class StoreQuotes:
 
     def _bar(self, q: DailyQuote) -> DailyBar:
         """A stored session as the port's bar. Its source is this adapter, not the provider the row
-        came from; trusted, since only closed sessions someone imported are stored (ADR 0000)."""
+        came from; trusted, since only closed sessions someone imported are stored (ADR 0000) —
+        unless its low and high do not bracket its open and close: then it is served as stored,
+        neither dropped nor corrected, but untrusted."""
+        # The Stooq importer rejects such a row, so in the own store it can only appear after a
+        # manual edit of the file. Reading it at all exists for the GPW store, whose rows are kept
+        # as GPW published them, some of them like this (ADR 0005).
+        trust = INCONSISTENT_OHLC if q.ohlc_breach else Trust.TRUSTED
         return DailyBar(q.session, q.open, q.high, q.low, q.close, q.volume, complete=True,
-                        source=self.name, trust=Trust.TRUSTED)
+                        source=self.name, trust=trust)

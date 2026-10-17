@@ -24,8 +24,9 @@ test_model.py           market_data/model.py — DateRange, Interval, PeriodInte
                         SessionsEachSide, Instrument, Isin, Price, Volume, DailyQuote, Trust, Status,
                         Quality, DailyBar, PeriodBar (and each as the Candle the readings see)
 test_store_file.py      market_data/store_file.py — the store's file schema: read, write, merge, StoredQuote
-test_store.py           market_data/adapters/store.py — StoreQuotes: what the store answers (every bar trusted),
-                        no_store, malformed, the store ahead of a lower source in a chain
+test_store.py           market_data/adapters/store.py — StoreQuotes: what the store answers (trusted, except a
+                        row whose low/high does not bracket open/close), no_store, malformed, the store
+                        ahead of a lower source in a chain
 test_import_stooq.py    market_data/importers/stooq.py and scripts/import_quotes.py — parse, snap, the real-export
                         guards and ATR pins, the importer end to end on a temp store, its usage errors
 test_indicators.py      market_data/indicators.py — aggregate, last_closed, ATR, swing lows (the readings' derived
@@ -154,7 +155,9 @@ values; the tests re-assert them on every run.
   `TestToBar`: an open, high, low or close Yahoo sent that is no price (0, negative, not finite)
   becomes `null` and makes the bar untrusted `"unusable_price"`, which also wins over `"placeholder"`
   on a bar flat at 0; a price Yahoo did not send, or an unusable volume, leaves the bar trusted.
-  `test_store.py`: every store bar is trusted, even one shaped like a placeholder. `TestTrust`,
+  `test_store.py`: a store bar is trusted, even one shaped like a placeholder, unless its low or
+  high does not bracket its open and close: then it is served as stored, untrusted
+  `"inconsistent_ohlc"`, and ATR and swing lows over it are `uncertain` naming its date. `TestTrust`,
   `TestQuality`, `TestPeriodBar` (`test_model.py`): an empty reason is rejected; quality is sorted and
   unique, and `uncertain` as soon as it names a session; a period bar without a close is `no_value`.
   `TestDailyBarAsCandle`, `TestPeriodBarAsCandle`: a daily bar's day is its session and it is

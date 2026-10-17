@@ -220,10 +220,15 @@ class TestParse(TempDir):
         self.assertIn("price", cm.exception.why)
 
     def test_ohlc_rule_names_the_line(self):
-        with self.assertRaises(StooqFormatError) as cm:
-            stooq.parse(self.export(PL_HEADER + "2026-07-03,10,12,11,10,1\n"))   # low above close
-        self.assertEqual(cm.exception.line, 2)
-        self.assertIn("low", cm.exception.why)
+        """An export whose low or high does not bracket its open and close is a broken export, not
+        a session: the store file would read it, so the importer is what keeps it out."""
+        for row, rule in (("2026-07-06,10,12,11,10,1", "low 11 is above min(open 10, close 10)"),
+                          ("2026-07-06,10,11,9,12,1", "high 11 is below max(open 10, close 12)")):
+            with self.subTest(row=row), self.assertRaises(StooqFormatError) as cm:
+                stooq.parse(self.export(PL_HEADER + "2026-07-03,10,12,9,11,1\n" + row + "\n"))
+            self.assertEqual(cm.exception.line, 3)
+            self.assertIn(rule, cm.exception.why)
+            self.assertIn("2026-07-06", cm.exception.why)
 
 
 class TestRealExports(TempDir):
