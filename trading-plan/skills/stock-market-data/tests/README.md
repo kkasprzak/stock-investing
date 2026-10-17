@@ -29,6 +29,7 @@ test_store.py           market_data/adapters/store.py — StoreQuotes: what the 
                         ahead of a lower source in a chain
 test_import_stooq.py    market_data/importers/stooq.py and scripts/import_quotes.py — parse, snap, the real-export
                         guards and ATR pins, the importer end to end on a temp store, its usage errors
+test_import_gpw.py      market_data/importers/gpw.py — saved GPW archive pages (fixtures/gpw/): rows, volume-0 skipped, PEO dividend, holiday, 13.10 before/after GPW's correction, rejected pages
 test_indicators.py      market_data/indicators.py — aggregate, last_closed, ATR, swing lows (the readings' derived
                         fields and the counts they refuse), the quality every reading carries,
                         placeholder sessions (ADR 0002), Stooq oracle
