@@ -88,7 +88,7 @@ class TestTheMap(unittest.TestCase):
     def test_every_entry_is_indexed(self):
         with open(quotes.SYMBOLS) as f:
             isins = list(json.load(f)["instruments"])
-        self.assertEqual(len(isins), 145)
+        self.assertEqual(len(isins), 148)
         index = SymbolIndex(quotes.SYMBOLS)
         self.assertEqual([i for i in isins if index.name(Isin.parse(i)) is None], [])
 
