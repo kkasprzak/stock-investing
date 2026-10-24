@@ -45,7 +45,7 @@ The candle of a session goes to the history when this session is closed. So an e
 * Good, because the indicators and the weekly or monthly candles use only closed sessions, and there is no special row that they must skip.
 * Good, because the own store or the GPW source cannot disagree with today's state, as today is not in the history until its session is closed.
 * Bad, because the shape of the answer changes, and every caller must be moved to it.
-* Bad, because the moment when a session closes comes from Yahoo, and Yahoo is delayed by about fifteen minutes. A candle read just after the close can still be without the closing auction. We start without any extra time for this, and we will add it if it turns out to be a problem.
+* Bad, because Yahoo gives the prices about fifteen minutes late. The moment when the session closes is correct, because it comes from the session hours that Yahoo gives. But a candle read just after this moment can still be without the final close from the closing auction. We start without any extra time for this, and we will add it if it turns out to be a problem.
 * Bad, because the state of today's session depends on one provider only. When Yahoo does not answer, this state is unknown, and it must be shown as unknown, not left out.
 
 ## Pros and Cons of the Options
