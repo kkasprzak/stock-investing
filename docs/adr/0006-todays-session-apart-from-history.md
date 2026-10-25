@@ -29,6 +29,7 @@ The question is how the layer should show today's session to an agent, so the ag
 * Keep one series, and fill the missing close of the latest candle with the last trade price
 * Keep one series, and add today as a row without prices, marked untrusted
 * Keep one series with the forming candle, and add a separate field with the state of today's session
+* Show today's session separately, and when a finished session has no close, take it from the last trade if this trade was inside that session
 * Show today's session separately from the series, and keep in the series only closed sessions
 
 ## Decision Outcome
@@ -37,15 +38,15 @@ Chosen option: "Show today's session separately from the series, and keep in the
 
 The answer for each instrument has two parts. First part is today's session: is it open, is there no trade yet, or is it closed, together with the last trade price and its own date. Second part is the closed history, from the chain of sources in ADR 0000 and ADR 0005, with Yahoo as the last one.
 
-The candle of a session goes to the history when this session is closed. So an evening run still reads the close of the day as a fact. We never make a candle or a closing price from the last trade fields. A day without a trade gets no made-up candle.
+A candle goes to the history only when its source has it as a closed session. For Yahoo it means that Yahoo itself gives the full candle (open, high, low and close) for a session which is finished. Until then this session stays in today's part, also after the close. Closed GPW sessions come mostly from the GPW archive source, which is collected after the session. We never make a candle or a closing price from the last trade fields. A day without a trade gets no made-up candle.
 
 ### Consequences
 
 * Good, because an agent reads the state of today's session in one place, written in words, and sees from its own date how old the last price is.
 * Good, because the indicators and the weekly or monthly candles use only closed sessions, and there is no special row that they must skip.
-* Good, because the own store or the GPW source cannot disagree with today's state, as today is not in the history until its session is closed.
+* Good, because the own store or the GPW source cannot disagree with today's state, as today is not in the history until a source has it as a closed session.
 * Bad, because the shape of the answer changes, and every caller must be moved to it.
-* Bad, because Yahoo gives the prices about fifteen minutes late. The moment when the session closes is correct, because it comes from the session hours that Yahoo gives. But a candle read just after this moment can still be without the final close from the closing auction. We start without any extra time for this, and we will add it if it turns out to be a problem.
+* Bad, because the history can come later. On 2026-10-24, the morning after a Friday session, Yahoo had no close in the Friday candle for two GPW names and one XETRA name. The close was only in the last trade fields. For names outside GPW, and for a GPW day which was not collected, the last closed session can be one day older for some time. The last closed price has then an older date, but it is a real price.
 * Bad, because the state of today's session depends on one provider only. When Yahoo does not answer, this state is unknown, and it must be shown as unknown, not left out.
 
 ## Pros and Cons of the Options
@@ -65,6 +66,11 @@ The candle of a session goes to the history when this session is closed. So an e
 * Good, because the state of today is written directly, with the own date of the last trade.
 * Bad, because a candle which is still forming stays in the series next to the closed ones, so the series still mixes a finished session with a not finished one.
 
+### Show today's session separately, and when a finished session has no close, take it from the last trade if this trade was inside that session
+
+* Good, because the history gets the close of a finished session earlier, and the price really comes from that session.
+* Bad, because it takes data of the current session and treats it as history, before the source itself has it as history. This is again the mixing which this decision wants to stop.
+
 ### Show today's session separately from the series, and keep in the series only closed sessions
 
 * Good, because today and the closed history cannot be confused.
@@ -72,4 +78,4 @@ The candle of a session goes to the history when this session is closed. So an e
 
 ## More Information
 
-Keeps the trust order of ADR 0000 and ADR 0005 for closed sessions, with Yahoo as the last source. Uses the rule of ADR 0002 also for today: values come only from sessions which really closed. Come back to this decision if a source we trust more than Yahoo starts to give a running session, or if a candle that goes to the history at the close is often different from the final one.
+Keeps the trust order of ADR 0000 and ADR 0005 for closed sessions, with Yahoo as the last source. Uses the rule of ADR 0002 also for today: values come only from sessions which really closed. Come back to this decision if a source we trust more than Yahoo starts to give a running session, or if Yahoo keeps the close of a finished session missing for so long that the history of names outside GPW is often behind.
