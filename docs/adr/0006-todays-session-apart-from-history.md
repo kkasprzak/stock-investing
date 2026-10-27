@@ -34,7 +34,7 @@ The question is how the layer should show today's session to an agent, so the ag
 
 ## Decision Outcome
 
-Chosen option: "Show today's session separately from the series, and keep in the series only closed sessions", because only in this option nothing that reads candles can take today as a closed session, and no candle is ever made from a price of another day.
+Chosen option: "Show today's session separately from the series, and keep in the series only closed sessions", because only in this option nothing that reads candles can take today as a closed session, and a session goes to the history only when its source itself has it as closed. No candle and no close is made from the last trade fields, not even for a session which is finished.
 
 The answer for each instrument has two parts. First part is today's session as Yahoo shows it, with the times the data comes from: the session hours, the last trade price with its own date and time, and the time when the data was read. It does not say more than these facts. For example, it does not say "there was no trade", because Yahoo is delayed by about fifteen minutes and a trade can be there already without Yahoo showing it. The agent who reads it can work out the rest from the times. Second part is the closed history, from the chain of sources in ADR 0000 and ADR 0005, with Yahoo as the last one.
 
@@ -69,11 +69,12 @@ A candle goes to the history only when its source has it as a closed session. Fo
 ### Show today's session separately, and when a finished session has no close, take it from the last trade if this trade was inside that session
 
 * Good, because the history gets the close of a finished session earlier, and the price really comes from that session.
-* Bad, because it takes data of the current session and treats it as history, before the source itself has it as history. This is again the mixing which this decision wants to stop.
+* Bad, because it takes the price from the last trade fields, not from a candle, and puts it into the history before the source itself has this session as closed. This is again the mixing which this decision wants to stop.
 
 ### Show today's session separately from the series, and keep in the series only closed sessions
 
 * Good, because today and the closed history cannot be confused.
+* Bad, because the history can come later: a finished session goes there only when its source has the full candle, and Yahoo can give the close of a finished session later.
 * Bad, because it changes the answer that every caller reads.
 
 ## More Information
