@@ -1,7 +1,7 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-10-19
-decision-makers:
+decision-makers: Karol Kasprzak
 consulted:
 informed:
 ---
